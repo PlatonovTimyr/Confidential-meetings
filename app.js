@@ -20,7 +20,8 @@ const AppState = {
     isConnected: false,
     timerInterval: null,
     startTime: null,
-    securityCheckInterval: null
+    securityCheckInterval: null,
+    previewStream: null
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -34,10 +35,12 @@ window.onSecurityAlert = function(type, message, stats) {
     const overlay = $('#alertOverlay');
     const layout = $('#meetingLayout');
     
-    layout.style.filter = 'hue-rotate(140deg) saturate(3) brightness(0.7)';
-    layout.style.transition = 'all 0.5s ease';
+    if (layout) {
+        layout.style.filter = 'hue-rotate(140deg) saturate(3) brightness(0.7)';
+        layout.style.transition = 'all 0.5s ease';
+    }
     
-    overlay.classList.remove('hidden');
+    if (overlay) overlay.classList.remove('hidden');
     
     const icons = {
         'REPLAY_ATTACK': '🔄',
@@ -48,9 +51,14 @@ window.onSecurityAlert = function(type, message, stats) {
         'DECRYPTION_ERROR': '🔓'
     };
     
-    $('#alertIcon').textContent = icons[type] || '⚠️';
-    $('#alertTitle').textContent = 'ОБНАРУЖЕНА АНОМАЛИЯ!';
-    $('#alertMessage').textContent = message;
+    const alertIcon = $('#alertIcon');
+    const alertTitle = $('#alertTitle');
+    const alertMessage = $('#alertMessage');
+    const alertDetails = $('#alertDetails');
+    
+    if (alertIcon) alertIcon.textContent = icons[type] || '⚠️';
+    if (alertTitle) alertTitle.textContent = 'ОБНАРУЖЕНА АНОМАЛИЯ!';
+    if (alertMessage) alertMessage.textContent = message;
     
     let detailsHTML = '<div class="alert-stats">';
     detailsHTML += `<p>Недействительных подписей: <strong>${stats.invalidSignatures}</strong></p>`;
@@ -60,13 +68,13 @@ window.onSecurityAlert = function(type, message, stats) {
     detailsHTML += `<p>Всего кадров: <strong>${stats.totalFrames}</strong></p>`;
     detailsHTML += '</div>';
     
-    $('#alertDetails').innerHTML = detailsHTML;
+    if (alertDetails) alertDetails.innerHTML = detailsHTML;
     
     let countdown = 15;
     const timerEl = $('#alertTimer');
     const countdownInterval = setInterval(() => {
         countdown--;
-        timerEl.textContent = `Автоотключение через ${countdown} сек`;
+        if (timerEl) timerEl.textContent = `Автоотключение через ${countdown} сек`;
         
         if (countdown <= 0) {
             clearInterval(countdownInterval);
@@ -74,35 +82,56 @@ window.onSecurityAlert = function(type, message, stats) {
         }
     }, 1000);
     
-    $('#alertDismissBtn').onclick = () => {
-        clearInterval(countdownInterval);
-        dismissAlert();
-    };
+    const dismissBtn = $('#alertDismissBtn');
+    const hangupBtn = $('#alertHangupBtn');
     
-    $('#alertHangupBtn').onclick = () => {
-        clearInterval(countdownInterval);
-        hangUp();
-    };
+    if (dismissBtn) {
+        dismissBtn.onclick = () => {
+            clearInterval(countdownInterval);
+            dismissAlert();
+        };
+    }
+    
+    if (hangupBtn) {
+        hangupBtn.onclick = () => {
+            clearInterval(countdownInterval);
+            hangUp();
+        };
+    }
 };
 
 function dismissAlert() {
     const overlay = $('#alertOverlay');
     const layout = $('#meetingLayout');
     
-    overlay.classList.add('hidden');
-    layout.style.filter = 'none';
+    if (overlay) overlay.classList.add('hidden');
+    if (layout) layout.style.filter = 'none';
     
-    CryptoModule.dismissAlerts();
+    if (typeof CryptoModule !== 'undefined') {
+        CryptoModule.dismissAlerts();
+    }
 }
 
 // ===== Инициализация =====
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('🚀 Confidential Meetings - Инициализация...');
+    console.log('📍 Текущий URL:', window.location.href);
+    
     setupMainScreen();
     setupCreateScreen();
     setupJoinScreen();
     setupInviteScreen();
     setupMeetingScreen();
-    checkUrlForRoom();
+    
+    // Проверяем URL с задержкой для надёжности
+    setTimeout(() => {
+        const hasRoom = checkUrlForRoom();
+        if (!hasRoom) {
+            console.log('📱 Комната не найдена, показываем главный экран');
+            const mainScreen = $('#mainScreen');
+            if (mainScreen) mainScreen.classList.remove('hidden');
+        }
+    }, 500);
 });
 
 function getRandomEmoji() {
@@ -111,12 +140,18 @@ function getRandomEmoji() {
 
 // ===== Предпросмотр камеры =====
 async function startCameraPreview(videoElement, avatarEmojiElement) {
+    if (!videoElement) return null;
+    
     try {
+        // Останавливаем предыдущий предпросмотр
+        stopCameraPreview();
+        
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+            video: { width: { ideal: 640 }, height: { ideal: 480 } },
             audio: false
         });
         
+        AppState.previewStream = stream;
         videoElement.srcObject = stream;
         videoElement.classList.remove('hidden');
         if (avatarEmojiElement) avatarEmojiElement.classList.add('hidden');
@@ -124,253 +159,355 @@ async function startCameraPreview(videoElement, avatarEmojiElement) {
         return stream;
     } catch (error) {
         console.log('Предпросмотр камеры недоступен:', error.message);
+        if (videoElement) videoElement.classList.add('hidden');
+        if (avatarEmojiElement) avatarEmojiElement.classList.remove('hidden');
         return null;
     }
 }
 
-function stopCameraPreview(stream) {
-    if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+function stopCameraPreview() {
+    if (AppState.previewStream) {
+        AppState.previewStream.getTracks().forEach(track => track.stop());
+        AppState.previewStream = null;
     }
 }
 
 // ===== Главный экран =====
 function setupMainScreen() {
-    $('#showCreateBtn').addEventListener('click', () => {
-        AppState.userEmoji = getRandomEmoji();
-        $('#createAvatarEmoji').textContent = AppState.userEmoji;
-        $('#mainScreen').classList.add('hidden');
-        $('#createScreen').classList.remove('hidden');
-        
-        // Запускаем предпросмотр если камера включена
-        if ($('#createCameraToggle').checked) {
-            startCameraPreview($('#createPreviewVideo'), $('#createAvatarEmoji'));
-        }
+    const showCreateBtn = $('#showCreateBtn');
+    const showJoinBtn = $('#showJoinBtn');
+    
+    if (showCreateBtn) {
+        showCreateBtn.addEventListener('click', () => {
+            AppState.userEmoji = getRandomEmoji();
+            const emojiEl = $('#createAvatarEmoji');
+            if (emojiEl) emojiEl.textContent = AppState.userEmoji;
+            
+            switchScreen('createScreen');
+            
+            // Запускаем предпросмотр если камера включена
+            const cameraToggle = $('#createCameraToggle');
+            if (cameraToggle && cameraToggle.checked) {
+                startCameraPreview($('#createPreviewVideo'), $('#createAvatarEmoji'));
+            }
+        });
+    }
+    
+    if (showJoinBtn) {
+        showJoinBtn.addEventListener('click', () => {
+            AppState.userEmoji = getRandomEmoji();
+            const emojiEl = $('#joinAvatarEmoji');
+            if (emojiEl) emojiEl.textContent = AppState.userEmoji;
+            
+            switchScreen('joinScreen');
+            
+            const cameraToggle = $('#joinCameraToggle');
+            if (cameraToggle && cameraToggle.checked) {
+                startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
+            }
+        });
+    }
+}
+
+function switchScreen(screenId) {
+    const screens = ['mainScreen', 'createScreen', 'joinScreen', 'inviteScreen', 'meetingScreen', 'scannerScreen'];
+    screens.forEach(id => {
+        const el = $('#' + id);
+        if (el) el.classList.add('hidden');
     });
     
-    $('#showJoinBtn').addEventListener('click', () => {
-        AppState.userEmoji = getRandomEmoji();
-        $('#joinAvatarEmoji').textContent = AppState.userEmoji;
-        $('#mainScreen').classList.add('hidden');
-        $('#joinScreen').classList.remove('hidden');
-        
-        if ($('#joinCameraToggle').checked) {
-            startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
-        }
-    });
+    const target = $('#' + screenId);
+    if (target) target.classList.remove('hidden');
 }
 
 // ===== Экран создания =====
 function setupCreateScreen() {
-    // Переключение камеры
-    $('#createCameraToggle').addEventListener('change', function() {
-        if (this.checked) {
-            startCameraPreview($('#createPreviewVideo'), $('#createAvatarEmoji'));
-        } else {
-            stopCameraPreview($('#createPreviewVideo').srcObject);
-            $('#createPreviewVideo').classList.add('hidden');
-            $('#createAvatarEmoji').classList.remove('hidden');
-        }
-    });
-    
-    $('#createMeetingBtn').addEventListener('click', async () => {
-        const name = $('#createUserName').value.trim() || 'Организатор';
-        AppState.userName = name;
-        AppState.isHost = true;
-        AppState.cameraEnabled = $('#createCameraToggle').checked;
-        AppState.micEnabled = $('#createMicToggle').checked;
-        
-        try {
-            // Останавливаем предпросмотр
-            stopCameraPreview($('#createPreviewVideo').srcObject);
-            
-            // Генерируем ключи шифрования
-            const keys = await CryptoModule.generateKeys();
-            
-            // Конвертируем ключ в строку для URL
-            AppState.encryptionKeyStr = btoa(String.fromCharCode(...new Uint8Array(keys.encryptionKey)));
-            
-            // Генерируем ID комнаты
-            AppState.roomId = generateRoomId();
-            
-            if (AppState.cameraEnabled) {
-                await captureMedia();
+    const cameraToggle = $('#createCameraToggle');
+    if (cameraToggle) {
+        cameraToggle.addEventListener('change', function() {
+            if (this.checked) {
+                startCameraPreview($('#createPreviewVideo'), $('#createAvatarEmoji'));
+            } else {
+                stopCameraPreview();
+                const previewVideo = $('#createPreviewVideo');
+                const avatarEmoji = $('#createAvatarEmoji');
+                if (previewVideo) previewVideo.classList.add('hidden');
+                if (avatarEmoji) avatarEmoji.classList.remove('hidden');
             }
-            
-            initTrystero();
-            showMeetingScreen();
-            updateLocalDisplay();
-            startTimer();
-            startSecurityMonitoring();
-            updateStatus('Защищённая встреча создана');
-            
-            // Генерируем ссылку с ключом
-            const link = generateMeetingLink();
-            $('#meetingLink').value = link;
-            $('#encryptionKeyDisplay').textContent = AppState.encryptionKeyStr.substring(0, 32) + '...';
-            await generateQRCode($('#qrCanvas'), link);
-            
-        } catch (error) {
-            alert('Ошибка: ' + error.message);
-            console.error(error);
-        }
-    });
+        });
+    }
     
-    $('#changeCreateAvatar').addEventListener('click', () => {
-        const emoji = getRandomEmoji();
-        $('#createAvatarEmoji').textContent = emoji;
-        AppState.userEmoji = emoji;
-    });
+    const createBtn = $('#createMeetingBtn');
+    if (createBtn) {
+        createBtn.addEventListener('click', async () => {
+            const nameInput = $('#createUserName');
+            AppState.userName = (nameInput && nameInput.value.trim()) || 'Организатор';
+            AppState.isHost = true;
+            AppState.cameraEnabled = $('#createCameraToggle') ? $('#createCameraToggle').checked : true;
+            AppState.micEnabled = $('#createMicToggle') ? $('#createMicToggle').checked : true;
+            
+            try {
+                stopCameraPreview();
+                
+                // Генерируем ключи шифрования
+                if (typeof CryptoModule !== 'undefined') {
+                    const keys = await CryptoModule.generateKeys();
+                    AppState.encryptionKeyStr = btoa(String.fromCharCode(...new Uint8Array(keys.encryptionKey)));
+                }
+                
+                AppState.roomId = generateRoomId();
+                
+                if (AppState.cameraEnabled) {
+                    await captureMedia();
+                }
+                
+                initTrystero();
+                switchScreen('meetingScreen');
+                updateLocalDisplay();
+                startTimer();
+                startSecurityMonitoring();
+                updateStatus('Защищённая встреча создана');
+                
+                const link = generateMeetingLink();
+                const meetingLinkInput = $('#meetingLink');
+                if (meetingLinkInput) meetingLinkInput.value = link;
+                
+                const keyDisplay = $('#encryptionKeyDisplay');
+                if (keyDisplay) keyDisplay.textContent = AppState.encryptionKeyStr.substring(0, 32) + '...';
+                
+                const qrCanvas = $('#qrCanvas');
+                if (qrCanvas) await generateQRCode(qrCanvas, link);
+                
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+                console.error(error);
+            }
+        });
+    }
+    
+    const changeAvatarBtn = $('#changeCreateAvatar');
+    if (changeAvatarBtn) {
+        changeAvatarBtn.addEventListener('click', () => {
+            const emoji = getRandomEmoji();
+            const emojiEl = $('#createAvatarEmoji');
+            if (emojiEl) emojiEl.textContent = emoji;
+            AppState.userEmoji = emoji;
+        });
+    }
 }
 
 // ===== Экран присоединения =====
 function setupJoinScreen() {
-    // Переключение камеры
-    $('#joinCameraToggle').addEventListener('change', function() {
-        if (this.checked) {
-            startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
-        } else {
-            stopCameraPreview($('#joinPreviewVideo').srcObject);
-            $('#joinPreviewVideo').classList.add('hidden');
-            $('#joinAvatarEmoji').classList.remove('hidden');
-        }
-    });
+    const cameraToggle = $('#joinCameraToggle');
+    if (cameraToggle) {
+        cameraToggle.addEventListener('change', function() {
+            if (this.checked) {
+                startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
+            } else {
+                stopCameraPreview();
+                const previewVideo = $('#joinPreviewVideo');
+                const avatarEmoji = $('#joinAvatarEmoji');
+                if (previewVideo) previewVideo.classList.add('hidden');
+                if (avatarEmoji) avatarEmoji.classList.remove('hidden');
+            }
+        });
+    }
     
-    $('#joinByLinkBtn').addEventListener('click', () => {
-        $('#linkInputGroup').classList.remove('hidden');
-    });
+    const joinByLinkBtn = $('#joinByLinkBtn');
+    if (joinByLinkBtn) {
+        joinByLinkBtn.addEventListener('click', () => {
+            const linkInputGroup = $('#linkInputGroup');
+            if (linkInputGroup) linkInputGroup.classList.remove('hidden');
+        });
+    }
     
-    $('#joinByQRBtn').addEventListener('click', () => {
-        stopCameraPreview($('#joinPreviewVideo').srcObject);
-        $('#joinScreen').classList.add('hidden');
-        $('#scannerScreen').classList.remove('hidden');
-        startScanner();
-    });
+    const joinByQRBtn = $('#joinByQRBtn');
+    if (joinByQRBtn) {
+        joinByQRBtn.addEventListener('click', () => {
+            stopCameraPreview();
+            switchScreen('scannerScreen');
+            startScanner();
+        });
+    }
     
-    $('#connectByLinkBtn').addEventListener('click', async () => {
-        const link = $('#meetingLinkInput').value.trim();
-        if (!link) return alert('Вставьте ссылку');
-        
-        stopCameraPreview($('#joinPreviewVideo').srcObject);
-        await parseAndJoin(link);
-    });
+    const connectByLinkBtn = $('#connectByLinkBtn');
+    if (connectByLinkBtn) {
+        connectByLinkBtn.addEventListener('click', async () => {
+            const linkInput = $('#meetingLinkInput');
+            const link = linkInput ? linkInput.value.trim() : '';
+            if (!link) return alert('Вставьте ссылку');
+            
+            stopCameraPreview();
+            await parseAndJoin(link);
+        });
+    }
     
-    $('#changeJoinAvatar').addEventListener('click', () => {
-        const emoji = getRandomEmoji();
-        $('#joinAvatarEmoji').textContent = emoji;
-        AppState.userEmoji = emoji;
-    });
+    const changeAvatarBtn = $('#changeJoinAvatar');
+    if (changeAvatarBtn) {
+        changeAvatarBtn.addEventListener('click', () => {
+            const emoji = getRandomEmoji();
+            const emojiEl = $('#joinAvatarEmoji');
+            if (emojiEl) emojiEl.textContent = emoji;
+            AppState.userEmoji = emoji;
+        });
+    }
     
-    $('#backFromScanner').addEventListener('click', () => {
-        $('#scannerScreen').classList.add('hidden');
-        $('#joinScreen').classList.remove('hidden');
-        stopScanner();
-        if ($('#joinCameraToggle').checked) {
-            startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
-        }
-    });
+    const backFromScanner = $('#backFromScanner');
+    if (backFromScanner) {
+        backFromScanner.addEventListener('click', () => {
+            stopScanner();
+            switchScreen('joinScreen');
+            const camToggle = $('#joinCameraToggle');
+            if (camToggle && camToggle.checked) {
+                startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
+            }
+        });
+    }
 }
 
 // ===== Экран приглашения =====
 function setupInviteScreen() {
-    // Переключение камеры
-    $('#inviteCameraToggle').addEventListener('change', function() {
-        if (this.checked) {
-            startCameraPreview($('#invitePreviewVideo'), $('#inviteAvatarEmoji'));
-        } else {
-            stopCameraPreview($('#invitePreviewVideo').srcObject);
-            $('#invitePreviewVideo').classList.add('hidden');
-            $('#inviteAvatarEmoji').classList.remove('hidden');
-        }
-    });
-    
-    $('#inviteConnectBtn').addEventListener('click', async () => {
-        AppState.userName = $('#inviteUserName').value.trim() || 'Гость';
-        AppState.cameraEnabled = $('#inviteCameraToggle').checked;
-        AppState.micEnabled = $('#inviteMicToggle').checked;
-        
-        if (!AppState.roomId) return alert('Не найдена комната');
-        
-        try {
-            stopCameraPreview($('#invitePreviewVideo').srcObject);
-            
-            if (AppState.cameraEnabled) {
-                await captureMedia();
+    const cameraToggle = $('#inviteCameraToggle');
+    if (cameraToggle) {
+        cameraToggle.addEventListener('change', function() {
+            if (this.checked) {
+                startCameraPreview($('#invitePreviewVideo'), $('#inviteAvatarEmoji'));
+            } else {
+                stopCameraPreview();
+                const previewVideo = $('#invitePreviewVideo');
+                const avatarEmoji = $('#inviteAvatarEmoji');
+                if (previewVideo) previewVideo.classList.add('hidden');
+                if (avatarEmoji) avatarEmoji.classList.remove('hidden');
             }
-            
-            initTrystero();
-            showMeetingScreen();
-            updateLocalDisplay();
-            startTimer();
-            startSecurityMonitoring();
-            updateStatus('Подключение к защищённой встрече...');
-            
-        } catch (error) {
-            alert('Ошибка: ' + error.message);
-        }
-    });
+        });
+    }
     
-    $('#changeInviteAvatar').addEventListener('click', () => {
-        const emoji = getRandomEmoji();
-        $('#inviteAvatarEmoji').textContent = emoji;
-        AppState.userEmoji = emoji;
-    });
+    const connectBtn = $('#inviteConnectBtn');
+    if (connectBtn) {
+        connectBtn.addEventListener('click', async () => {
+            const nameInput = $('#inviteUserName');
+            AppState.userName = (nameInput && nameInput.value.trim()) || 'Гость';
+            AppState.cameraEnabled = $('#inviteCameraToggle') ? $('#inviteCameraToggle').checked : true;
+            AppState.micEnabled = $('#inviteMicToggle') ? $('#inviteMicToggle').checked : true;
+            
+            if (!AppState.roomId) return alert('Не найдена комната');
+            
+            try {
+                stopCameraPreview();
+                
+                if (AppState.cameraEnabled) {
+                    await captureMedia();
+                }
+                
+                initTrystero();
+                switchScreen('meetingScreen');
+                updateLocalDisplay();
+                startTimer();
+                startSecurityMonitoring();
+                updateStatus('Подключение к защищённой встрече...');
+                
+            } catch (error) {
+                alert('Ошибка: ' + error.message);
+            }
+        });
+    }
     
-    // Запускаем предпросмотр при загрузке
-    if ($('#inviteCameraToggle').checked) {
-        startCameraPreview($('#invitePreviewVideo'), $('#inviteAvatarEmoji'));
+    const changeAvatarBtn = $('#changeInviteAvatar');
+    if (changeAvatarBtn) {
+        changeAvatarBtn.addEventListener('click', () => {
+            const emoji = getRandomEmoji();
+            const emojiEl = $('#inviteAvatarEmoji');
+            if (emojiEl) emojiEl.textContent = emoji;
+            AppState.userEmoji = emoji;
+        });
     }
 }
 
 // ===== Экран встречи =====
 function setupMeetingScreen() {
-    $('#micBtn').addEventListener('click', toggleMic);
-    $('#cameraBtn').addEventListener('click', toggleCamera);
-    $('#screenShareBtn').addEventListener('click', toggleScreenShare);
-    $('#shareBtn').addEventListener('click', () => {
-        $('#sharePanel').classList.toggle('hidden');
-        $('#chatPanel').classList.add('hidden');
-    });
-    $('#chatBtn').addEventListener('click', () => {
-        $('#chatPanel').classList.toggle('hidden');
-        $('#sharePanel').classList.add('hidden');
-    });
-    $('#hangupBtn').addEventListener('click', hangUp);
+    const micBtn = $('#micBtn');
+    const cameraBtn = $('#cameraBtn');
+    const screenShareBtn = $('#screenShareBtn');
+    const shareBtn = $('#shareBtn');
+    const chatBtn = $('#chatBtn');
+    const hangupBtn = $('#hangupBtn');
     
-    $('#closeSharePanel').addEventListener('click', () => $('#sharePanel').classList.add('hidden'));
-    $('#closeChatPanel').addEventListener('click', () => $('#chatPanel').classList.add('hidden'));
+    if (micBtn) micBtn.addEventListener('click', toggleMic);
+    if (cameraBtn) cameraBtn.addEventListener('click', toggleCamera);
+    if (screenShareBtn) screenShareBtn.addEventListener('click', toggleScreenShare);
     
-    $('#copyLinkBtn').addEventListener('click', () => {
-        const input = $('#meetingLink');
-        input.select();
-        document.execCommand('copy');
-        
-        const btn = $('#copyLinkBtn');
-        btn.innerHTML = '<i class="fas fa-check"></i>';
-        setTimeout(() => {
-            btn.innerHTML = '<i class="fas fa-copy"></i>';
-        }, 1500);
+    if (shareBtn) {
+        shareBtn.addEventListener('click', () => {
+            const sharePanel = $('#sharePanel');
+            const chatPanel = $('#chatPanel');
+            if (sharePanel) sharePanel.classList.toggle('hidden');
+            if (chatPanel) chatPanel.classList.add('hidden');
+        });
+    }
+    
+    if (chatBtn) {
+        chatBtn.addEventListener('click', () => {
+            const chatPanel = $('#chatPanel');
+            const sharePanel = $('#sharePanel');
+            if (chatPanel) chatPanel.classList.toggle('hidden');
+            if (sharePanel) sharePanel.classList.add('hidden');
+        });
+    }
+    
+    if (hangupBtn) hangupBtn.addEventListener('click', hangUp);
+    
+    const closeSharePanel = $('#closeSharePanel');
+    const closeChatPanel = $('#closeChatPanel');
+    if (closeSharePanel) closeSharePanel.addEventListener('click', () => {
+        const sharePanel = $('#sharePanel');
+        if (sharePanel) sharePanel.classList.add('hidden');
+    });
+    if (closeChatPanel) closeChatPanel.addEventListener('click', () => {
+        const chatPanel = $('#chatPanel');
+        if (chatPanel) chatPanel.classList.add('hidden');
     });
     
-    $('#sendMessageBtn').addEventListener('click', sendChatMessage);
-    $('#chatInput').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendChatMessage();
-    });
+    const copyLinkBtn = $('#copyLinkBtn');
+    if (copyLinkBtn) {
+        copyLinkBtn.addEventListener('click', () => {
+            const input = $('#meetingLink');
+            if (input) {
+                input.select();
+                document.execCommand('copy');
+                copyLinkBtn.innerHTML = '<i class="fas fa-check"></i>';
+                setTimeout(() => {
+                    copyLinkBtn.innerHTML = '<i class="fas fa-copy"></i>';
+                }, 1500);
+            }
+        });
+    }
     
-    $('#changeLocalAvatar').addEventListener('click', () => {
-        const emoji = getRandomEmoji();
-        $('#localAvatarEmoji').textContent = emoji;
-        AppState.userEmoji = emoji;
-        
-        // Отправляем новый эмодзи собеседнику
-        if (AppState.sendUserInfo) {
-            AppState.sendUserInfo({
-                name: AppState.userName,
-                hasVideo: AppState.cameraEnabled,
-                emoji: AppState.userEmoji
-            });
-        }
-    });
+    const sendMessageBtn = $('#sendMessageBtn');
+    const chatInput = $('#chatInput');
+    if (sendMessageBtn) sendMessageBtn.addEventListener('click', sendChatMessage);
+    if (chatInput) {
+        chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendChatMessage();
+        });
+    }
+    
+    const changeLocalAvatar = $('#changeLocalAvatar');
+    if (changeLocalAvatar) {
+        changeLocalAvatar.addEventListener('click', () => {
+            const emoji = getRandomEmoji();
+            const emojiEl = $('#localAvatarEmoji');
+            if (emojiEl) emojiEl.textContent = emoji;
+            AppState.userEmoji = emoji;
+            
+            if (AppState.sendUserInfo) {
+                AppState.sendUserInfo({
+                    name: AppState.userName,
+                    hasVideo: AppState.cameraEnabled,
+                    emoji: AppState.userEmoji
+                });
+            }
+        });
+    }
 }
 
 // ===== Захват медиа =====
@@ -381,24 +518,32 @@ async function captureMedia() {
             audio: true
         });
         
-        // Применяем настройку микрофона
         const audioTrack = AppState.localStream.getAudioTracks()[0];
         if (audioTrack) {
             audioTrack.enabled = AppState.micEnabled;
         }
         
-        $('#localVideo').srcObject = AppState.localStream;
-        $('#localVideo').parentElement.classList.remove('hidden');
-        $('#localAvatarWrapper').classList.add('hidden');
+        const localVideo = $('#localVideo');
+        if (localVideo) {
+            localVideo.srcObject = AppState.localStream;
+            const videoWrapper = localVideo.parentElement;
+            if (videoWrapper) videoWrapper.classList.remove('hidden');
+        }
         
-        // Обновляем кнопку микрофона
+        const localAvatarWrapper = $('#localAvatarWrapper');
+        if (localAvatarWrapper) localAvatarWrapper.classList.add('hidden');
+        
         updateMicButton();
         
     } catch (error) {
         console.error('Ошибка камеры:', error);
         AppState.cameraEnabled = false;
-        $('#localVideo').parentElement.classList.add('hidden');
-        $('#localAvatarWrapper').classList.remove('hidden');
+        const localVideo = $('#localVideo');
+        if (localVideo && localVideo.parentElement) {
+            localVideo.parentElement.classList.add('hidden');
+        }
+        const localAvatarWrapper = $('#localAvatarWrapper');
+        if (localAvatarWrapper) localAvatarWrapper.classList.remove('hidden');
     }
 }
 
@@ -415,25 +560,30 @@ async function toggleScreenShare() {
             audio: false
         });
         
-        // Отслеживаем завершение демонстрации
         AppState.screenStream.getVideoTracks()[0].onended = () => {
             stopScreenShare();
         };
         
-        // Показываем локально
-        $('#screenShareVideo').srcObject = AppState.screenStream;
-        $('#screenShareCard').classList.remove('hidden');
-        $('#screenShareBtn').classList.add('active');
+        const screenShareVideo = $('#screenShareVideo');
+        if (screenShareVideo) screenShareVideo.srcObject = AppState.screenStream;
+        
+        const screenShareCard = $('#screenShareCard');
+        if (screenShareCard) screenShareCard.classList.remove('hidden');
+        
+        const screenShareBtn = $('#screenShareBtn');
+        if (screenShareBtn) screenShareBtn.classList.add('active');
+        
         AppState.screenSharing = true;
         
-        // Добавляем трек экрана во все существующие peer-соединения
         const screenTrack = AppState.screenStream.getVideoTracks()[0];
         
         AppState.peers.forEach((peer) => {
             try {
-                // Удаляем старый экранный трек если есть
                 const senders = peer.getSenders();
-                const existingSender = senders.find(s => s.track && s.track.kind === 'video' && s.track.label.includes('screen'));
+                const existingSender = senders.find(s => 
+                    s.track && s.track.kind === 'video' && 
+                    (s.track.label || '').includes('screen')
+                );
                 if (existingSender) {
                     existingSender.replaceTrack(screenTrack);
                 } else {
@@ -455,16 +605,29 @@ function stopScreenShare() {
         AppState.screenStream.getTracks().forEach(t => t.stop());
         AppState.screenStream = null;
     }
-    $('#screenShareVideo').srcObject = null;
-    $('#screenShareCard').classList.add('hidden');
-    $('#screenShareBtn').classList.remove('active');
+    
+    const screenShareVideo = $('#screenShareVideo');
+    if (screenShareVideo) screenShareVideo.srcObject = null;
+    
+    const screenShareCard = $('#screenShareCard');
+    if (screenShareCard) screenShareCard.classList.add('hidden');
+    
+    const screenShareBtn = $('#screenShareBtn');
+    if (screenShareBtn) screenShareBtn.classList.remove('active');
+    
     AppState.screenSharing = false;
 }
 
 // ===== Trystero =====
 function initTrystero() {
+    if (!window.trysteroJoinRoom) {
+        console.error('Trystero не загружен!');
+        updateStatus('Ошибка загрузки модуля связи');
+        return;
+    }
+    
     AppState.room = window.trysteroJoinRoom({
-        appId: 'conf-meet-v4-' + AppState.roomId
+        appId: 'conf-meet-v5-' + AppState.roomId
     }, 'meeting');
     
     const [sendSignal, getSignal] = AppState.room.makeAction('signal');
@@ -475,18 +638,15 @@ function initTrystero() {
     AppState.sendChatMsg = sendChat;
     AppState.sendUserInfo = sendUserInfo;
     
-    // Получаем сигналы WebRTC
     getSignal((data, peerId) => handleSignal(peerId, data));
     
-    // Получаем сообщения чата
     getChat((data) => {
         console.log('Получено сообщение чата:', data);
         if (data && data.text) {
-            displayChatMessage(data.sender, data.text, false);
+            displayChatMessage(data.sender || 'Собеседник', data.text, false);
         }
     });
     
-    // Получаем информацию о пользователе
     getUserInfo((info) => {
         console.log('Получена информация о пользователе:', info);
         updateRemoteUser(info);
@@ -495,14 +655,12 @@ function initTrystero() {
     AppState.room.onPeerJoin((peerId) => {
         console.log('Новый участник:', peerId);
         
-        // Отправляем информацию о себе
         sendUserInfo({
             name: AppState.userName,
             hasVideo: AppState.cameraEnabled,
             emoji: AppState.userEmoji
         });
         
-        // Если мы гость - инициируем соединение
         if (!AppState.isHost) {
             createPeer(peerId, true);
         }
@@ -513,10 +671,18 @@ function initTrystero() {
         if (peer) peer.destroy();
         AppState.peers.delete(peerId);
         
-        $('#remoteVideo').srcObject = null;
-        $('#remoteCard').classList.add('hidden');
-        $('#screenShareCard').classList.add('hidden');
-        $('#emptyState').classList.remove('hidden');
+        const remoteVideo = $('#remoteVideo');
+        if (remoteVideo) remoteVideo.srcObject = null;
+        
+        const remoteCard = $('#remoteCard');
+        if (remoteCard) remoteCard.classList.add('hidden');
+        
+        const screenShareCard = $('#screenShareCard');
+        if (screenShareCard) screenShareCard.classList.add('hidden');
+        
+        const emptyState = $('#emptyState');
+        if (emptyState) emptyState.classList.remove('hidden');
+        
         AppState.isConnected = false;
         updateStatus('Собеседник отключился');
         updateParticipantCount();
@@ -536,7 +702,6 @@ function handleSignal(peerId, signalData) {
 }
 
 function createPeer(peerId, initiator) {
-    // Создаём массив потоков
     const streams = [];
     if (AppState.localStream) streams.push(AppState.localStream);
     if (AppState.screenStream) streams.push(AppState.screenStream);
@@ -555,27 +720,35 @@ function createPeer(peerId, initiator) {
     });
     
     peer.on('stream', (stream) => {
-        console.log('Получен поток:', stream);
+        console.log('Получен поток');
         
-        // Определяем тип потока
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
             const label = videoTrack.label || '';
             
             if (label.includes('screen') || label.includes('display') || label.includes('window')) {
-                // Это демонстрация экрана
-                $('#screenShareVideo').srcObject = stream;
-                $('#screenShareCard').classList.remove('hidden');
+                const screenShareVideo = $('#screenShareVideo');
+                if (screenShareVideo) screenShareVideo.srcObject = stream;
+                const screenShareCard = $('#screenShareCard');
+                if (screenShareCard) screenShareCard.classList.remove('hidden');
             } else {
-                // Это видео с камеры
-                $('#remoteVideo').srcObject = stream;
-                $('#remoteVideo').parentElement.classList.remove('hidden');
-                $('#remoteAvatarWrapper').classList.add('hidden');
+                const remoteVideo = $('#remoteVideo');
+                if (remoteVideo) {
+                    remoteVideo.srcObject = stream;
+                    const videoWrapper = remoteVideo.parentElement;
+                    if (videoWrapper) videoWrapper.classList.remove('hidden');
+                }
+                const remoteAvatarWrapper = $('#remoteAvatarWrapper');
+                if (remoteAvatarWrapper) remoteAvatarWrapper.classList.add('hidden');
             }
         }
         
-        $('#remoteCard').classList.remove('hidden');
-        $('#emptyState').classList.add('hidden');
+        const remoteCard = $('#remoteCard');
+        if (remoteCard) remoteCard.classList.remove('hidden');
+        
+        const emptyState = $('#emptyState');
+        if (emptyState) emptyState.classList.add('hidden');
+        
         AppState.isConnected = true;
         updateStatus('✅ Защищённое соединение установлено');
         updateParticipantCount();
@@ -585,11 +758,12 @@ function createPeer(peerId, initiator) {
     
     peer.on('close', () => {
         AppState.peers.delete(peerId);
-        $('#remoteVideo').srcObject = null;
-        $('#screenShareVideo').srcObject = null;
-        $('#remoteCard').classList.add('hidden');
-        $('#screenShareCard').classList.add('hidden');
-        $('#emptyState').classList.remove('hidden');
+        const remoteVideo = $('#remoteVideo');
+        if (remoteVideo) remoteVideo.srcObject = null;
+        const remoteCard = $('#remoteCard');
+        if (remoteCard) remoteCard.classList.add('hidden');
+        const emptyState = $('#emptyState');
+        if (emptyState) emptyState.classList.remove('hidden');
         AppState.isConnected = false;
         updateStatus('Собеседник отключился');
         updateParticipantCount();
@@ -621,10 +795,10 @@ function updateMicButton() {
     const icon = $('#localMicIcon');
     
     if (AppState.micEnabled) {
-        btn.classList.remove('off');
+        if (btn) btn.classList.remove('off');
         if (icon) icon.className = 'fas fa-microphone';
     } else {
-        btn.classList.add('off');
+        if (btn) btn.classList.add('off');
         if (icon) icon.className = 'fas fa-microphone-slash mic-off';
     }
 }
@@ -639,16 +813,23 @@ function toggleCamera() {
             const btn = $('#cameraBtn');
             
             if (AppState.cameraEnabled) {
-                btn.classList.remove('off');
-                $('#localVideo').parentElement.classList.remove('hidden');
-                $('#localAvatarWrapper').classList.add('hidden');
+                if (btn) btn.classList.remove('off');
+                const localVideo = $('#localVideo');
+                if (localVideo && localVideo.parentElement) {
+                    localVideo.parentElement.classList.remove('hidden');
+                }
+                const localAvatarWrapper = $('#localAvatarWrapper');
+                if (localAvatarWrapper) localAvatarWrapper.classList.add('hidden');
             } else {
-                btn.classList.add('off');
-                $('#localVideo').parentElement.classList.add('hidden');
-                $('#localAvatarWrapper').classList.remove('hidden');
+                if (btn) btn.classList.add('off');
+                const localVideo = $('#localVideo');
+                if (localVideo && localVideo.parentElement) {
+                    localVideo.parentElement.classList.add('hidden');
+                }
+                const localAvatarWrapper = $('#localAvatarWrapper');
+                if (localAvatarWrapper) localAvatarWrapper.classList.remove('hidden');
             }
             
-            // Отправляем обновлённую информацию
             if (AppState.sendUserInfo) {
                 AppState.sendUserInfo({
                     name: AppState.userName,
@@ -662,15 +843,16 @@ function toggleCamera() {
 
 // ===== Чат =====
 function sendChatMessage() {
-    const text = $('#chatInput').value.trim();
+    const chatInput = $('#chatInput');
+    if (!chatInput) return;
+    
+    const text = chatInput.value.trim();
     if (!text) return;
     
     console.log('Отправка сообщения:', text);
     
-    // Отображаем своё сообщение
     displayChatMessage(AppState.userName, text, true);
     
-    // Отправляем через Trystero
     if (AppState.sendChatMsg) {
         AppState.sendChatMsg({
             sender: AppState.userName,
@@ -679,11 +861,14 @@ function sendChatMessage() {
         });
     }
     
-    $('#chatInput').value = '';
-    $('#chatInput').focus();
+    chatInput.value = '';
+    chatInput.focus();
 }
 
 function displayChatMessage(sender, text, isMine) {
+    const chatMessages = $('#chatMessages');
+    if (!chatMessages) return;
+    
     const msgDiv = document.createElement('div');
     msgDiv.className = `chat-message ${isMine ? 'mine' : 'other'}`;
     msgDiv.innerHTML = `
@@ -691,15 +876,17 @@ function displayChatMessage(sender, text, isMine) {
         <span class="text">${escapeHtml(text)}</span>
     `;
     
-    const empty = $('#chatMessages').querySelector('.chat-empty');
+    const empty = chatMessages.querySelector('.chat-empty');
     if (empty) empty.remove();
     
-    $('#chatMessages').appendChild(msgDiv);
-    $('#chatMessages').scrollTop = $('#chatMessages').scrollHeight;
+    chatMessages.appendChild(msgDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
 // ===== QR =====
 async function generateQRCode(canvas, data) {
+    if (!canvas || !data) return;
+    
     try {
         await QRCode.toCanvas(canvas, data, {
             width: 200,
@@ -719,13 +906,13 @@ async function startScanner() {
         });
         
         AppState.scannerStream = stream;
-        $('#scannerVideo').srcObject = stream;
+        const scannerVideo = $('#scannerVideo');
+        if (scannerVideo) scannerVideo.srcObject = stream;
         
         scanLoop();
     } catch (e) {
         alert('Ошибка камеры: ' + e.message);
-        $('#scannerScreen').classList.add('hidden');
-        $('#joinScreen').classList.remove('hidden');
+        switchScreen('joinScreen');
     }
 }
 
@@ -737,7 +924,7 @@ function scanLoop() {
         }
         
         const video = $('#scannerVideo');
-        if (video.readyState < 2) return;
+        if (!video || video.readyState < 2) return;
         
         const canvas = document.createElement('canvas');
         canvas.width = video.videoWidth;
@@ -763,7 +950,40 @@ function stopScanner() {
     }
 }
 
-// ===== Парсинг ссылки и присоединение =====
+// ===== Парсинг ссылки =====
+function parseHashParams() {
+    const hash = window.location.hash;
+    console.log('🔍 Парсинг хеша:', hash);
+    
+    if (!hash || hash === '#') return null;
+    
+    const hashContent = hash.startsWith('#') ? hash.slice(1) : hash;
+    const params = new URLSearchParams(hashContent);
+    
+    const roomId = params.get('room');
+    const key = params.get('key');
+    
+    console.log('Извлечено:', { roomId, key });
+    
+    if (roomId) {
+        return { roomId, key };
+    }
+    
+    // Альтернативный парсинг
+    if (hashContent.includes('room=')) {
+        const parts = hashContent.split('&');
+        const roomPart = parts.find(p => p.startsWith('room='));
+        const keyPart = parts.find(p => p.startsWith('key='));
+        
+        return {
+            roomId: roomPart ? roomPart.split('=')[1] : null,
+            key: keyPart ? keyPart.split('=')[1] : null
+        };
+    }
+    
+    return null;
+}
+
 async function parseAndJoin(link) {
     try {
         const url = new URL(link);
@@ -775,18 +995,19 @@ async function parseAndJoin(link) {
         if (!roomId) return alert('Неверная ссылка');
         
         AppState.roomId = roomId;
-        AppState.userName = $('#joinUserName').value.trim() || 'Гость';
-        AppState.cameraEnabled = $('#joinCameraToggle').checked;
-        AppState.micEnabled = $('#joinMicToggle').checked;
+        AppState.userName = ($('#joinUserName') && $('#joinUserName').value.trim()) || 'Гость';
+        AppState.cameraEnabled = $('#joinCameraToggle') ? $('#joinCameraToggle').checked : true;
+        AppState.micEnabled = $('#joinMicToggle') ? $('#joinMicToggle').checked : true;
         
-        // Импортируем ключ шифрования если есть
         if (key) {
-            const keyBytes = Uint8Array.from(atob(key), c => c.charCodeAt(0));
-            await CryptoModule.importKey(keyBytes);
             AppState.encryptionKeyStr = key;
+            if (typeof CryptoModule !== 'undefined') {
+                const keyBytes = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+                await CryptoModule.importKey(keyBytes);
+            }
         }
         
-        $('#scannerScreen').classList.add('hidden');
+        switchScreen('meetingScreen');
         await joinRoom(roomId);
         
     } catch (e) {
@@ -804,7 +1025,6 @@ async function joinRoom(roomId) {
         }
         
         initTrystero();
-        showMeetingScreen();
         updateLocalDisplay();
         startTimer();
         startSecurityMonitoring();
@@ -815,29 +1035,88 @@ async function joinRoom(roomId) {
     }
 }
 
-// ===== UI =====
-function showMeetingScreen() {
-    $('#mainScreen').classList.add('hidden');
-    $('#createScreen').classList.add('hidden');
-    $('#joinScreen').classList.add('hidden');
-    $('#inviteScreen').classList.add('hidden');
-    $('#meetingScreen').classList.remove('hidden');
+// ===== Проверка URL при загрузке =====
+function checkUrlForRoom() {
+    console.log('🔍 Проверка URL при загрузке...');
+    console.log('Текущий URL:', window.location.href);
+    
+    const parsed = parseHashParams();
+    
+    if (parsed && parsed.roomId) {
+        console.log('✅ Найдена комната:', parsed.roomId);
+        
+        AppState.roomId = parsed.roomId;
+        
+        if (parsed.key) {
+            console.log('🔑 Найден ключ шифрования');
+            AppState.encryptionKeyStr = parsed.key;
+            
+            try {
+                if (typeof CryptoModule !== 'undefined') {
+                    const keyBytes = Uint8Array.from(atob(parsed.key), c => c.charCodeAt(0));
+                    CryptoModule.importKey(keyBytes);
+                    console.log('✅ Ключ импортирован');
+                }
+            } catch (e) {
+                console.error('Ошибка импорта ключа:', e);
+            }
+        }
+        
+        // Скрываем все экраны кроме приглашения
+        const screens = $$('.screen');
+        screens.forEach(s => s.classList.add('hidden'));
+        
+        const inviteScreen = $('#inviteScreen');
+        if (inviteScreen) inviteScreen.classList.remove('hidden');
+        
+        // Генерируем QR
+        setTimeout(() => {
+            const qrCanvas = $('#inviteQRCanvas');
+            if (qrCanvas) generateQRCode(qrCanvas, window.location.href);
+        }, 500);
+        
+        // Запускаем предпросмотр
+        setTimeout(() => {
+            const cameraToggle = $('#inviteCameraToggle');
+            if (cameraToggle && cameraToggle.checked) {
+                startCameraPreview($('#invitePreviewVideo'), $('#inviteAvatarEmoji'));
+            }
+        }, 800);
+        
+        return true;
+    }
+    
+    console.log('❌ Комната не найдена в URL');
+    return false;
 }
 
+// ===== UI =====
 function updateLocalDisplay() {
-    $('#localName').textContent = AppState.userName || 'Вы';
-    $('#localAvatarEmoji').textContent = AppState.userEmoji;
+    const localName = $('#localName');
+    if (localName) localName.textContent = AppState.userName || 'Вы';
+    
+    const localAvatarEmoji = $('#localAvatarEmoji');
+    if (localAvatarEmoji) localAvatarEmoji.textContent = AppState.userEmoji;
     
     if (AppState.cameraEnabled) {
-        $('#localVideo').parentElement.classList.remove('hidden');
-        $('#localAvatarWrapper').classList.add('hidden');
+        const localVideo = $('#localVideo');
+        if (localVideo && localVideo.parentElement) {
+            localVideo.parentElement.classList.remove('hidden');
+        }
+        const localAvatarWrapper = $('#localAvatarWrapper');
+        if (localAvatarWrapper) localAvatarWrapper.classList.add('hidden');
     } else {
-        $('#localVideo').parentElement.classList.add('hidden');
-        $('#localAvatarWrapper').classList.remove('hidden');
+        const localVideo = $('#localVideo');
+        if (localVideo && localVideo.parentElement) {
+            localVideo.parentElement.classList.add('hidden');
+        }
+        const localAvatarWrapper = $('#localAvatarWrapper');
+        if (localAvatarWrapper) localAvatarWrapper.classList.remove('hidden');
     }
     
     if (AppState.isHost) {
-        $('#hostChip').classList.remove('hidden');
+        const hostChip = $('#hostChip');
+        if (hostChip) hostChip.classList.remove('hidden');
     }
     
     updateMicButton();
@@ -850,35 +1129,45 @@ function updateRemoteUser(info) {
     const hasVideo = info.hasVideo !== undefined ? info.hasVideo : true;
     const emoji = info.emoji || '👤';
     
-    $('#remoteName').textContent(name);
+    const remoteName = $('#remoteName');
+    if (remoteName) remoteName.textContent = name;
     
-    // Обновляем эмодзи собеседника
-    const remoteEmojiEl = $('#remoteAvatarWrapper .avatar-emoji');
-    if (remoteEmojiEl) {
-        remoteEmojiEl.textContent = emoji;
-    }
+    const remoteEmojiEl = document.querySelector('#remoteAvatarWrapper .avatar-emoji');
+    if (remoteEmojiEl) remoteEmojiEl.textContent = emoji;
     
-    $('#remoteCard').classList.remove('hidden');
-    $('#emptyState').classList.add('hidden');
+    const remoteCard = $('#remoteCard');
+    if (remoteCard) remoteCard.classList.remove('hidden');
+    
+    const emptyState = $('#emptyState');
+    if (emptyState) emptyState.classList.add('hidden');
     
     if (!hasVideo) {
-        $('#remoteVideo').parentElement.classList.add('hidden');
-        $('#remoteAvatarWrapper').classList.remove('hidden');
+        const remoteVideo = $('#remoteVideo');
+        if (remoteVideo && remoteVideo.parentElement) {
+            remoteVideo.parentElement.classList.add('hidden');
+        }
+        const remoteAvatarWrapper = $('#remoteAvatarWrapper');
+        if (remoteAvatarWrapper) remoteAvatarWrapper.classList.remove('hidden');
     }
     
     updateParticipantCount();
 }
 
 function updateParticipantCount() {
-    $('#participantCount').textContent = AppState.peers.size + 1;
+    const count = AppState.peers.size + 1;
+    const participantCount = $('#participantCount');
+    if (participantCount) participantCount.textContent = count;
 }
 
 function updateStatus(text) {
-    $('#meetingStatus').textContent = text;
+    const meetingStatus = $('#meetingStatus');
+    if (meetingStatus) meetingStatus.textContent = text;
 }
 
 // ===== Мониторинг безопасности =====
 function startSecurityMonitoring() {
+    if (typeof CryptoModule === 'undefined') return;
+    
     AppState.securityCheckInterval = setInterval(() => {
         const stats = CryptoModule.securityStats;
         
@@ -892,20 +1181,7 @@ function startSecurityMonitoring() {
                 'Обнаружено множество replay-атак!');
         }
         
-        updateSecurityIndicators();
-        
     }, 3000);
-}
-
-function updateSecurityIndicators() {
-    const stats = CryptoModule.securityStats;
-    const indicators = $$('.security-ok');
-    
-    if (indicators.length >= 3) {
-        indicators[0].style.color = stats.hashMismatches === 0 ? 'var(--success)' : 'var(--danger)';
-        indicators[1].style.color = stats.invalidSignatures === 0 ? 'var(--success)' : 'var(--danger)';
-        indicators[2].style.color = stats.timingAnomalies < 5 ? 'var(--success)' : 'var(--warning)';
-    }
 }
 
 // ===== Таймер =====
@@ -915,7 +1191,8 @@ function startTimer() {
         const elapsed = Math.floor((Date.now() - AppState.startTime) / 1000);
         const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
         const secs = (elapsed % 60).toString().padStart(2, '0');
-        $('#timerDisplay').textContent = `${mins}:${secs}`;
+        const timerDisplay = $('#timerDisplay');
+        if (timerDisplay) timerDisplay.textContent = `${mins}:${secs}`;
     }, 1000);
 }
 
@@ -936,6 +1213,7 @@ function hangUp() {
     
     stopScreenShare();
     stopScanner();
+    stopCameraPreview();
     
     if (AppState.timerInterval) clearInterval(AppState.timerInterval);
     if (AppState.securityCheckInterval) clearInterval(AppState.securityCheckInterval);
@@ -943,26 +1221,25 @@ function hangUp() {
     AppState.isHost = false;
     AppState.roomId = null;
     AppState.isConnected = false;
+    AppState.sendSignal = null;
+    AppState.sendChatMsg = null;
+    AppState.sendUserInfo = null;
     
-    $('#meetingScreen').classList.add('hidden');
-    $('#alertOverlay').classList.add('hidden');
-    $('#meetingLayout').style.filter = 'none';
-    $('#mainScreen').classList.remove('hidden');
+    const alertOverlay = $('#alertOverlay');
+    if (alertOverlay) alertOverlay.classList.add('hidden');
+    
+    const meetingLayout = $('#meetingLayout');
+    if (meetingLayout) meetingLayout.style.filter = 'none';
+    
+    switchScreen('mainScreen');
     
     window.location.hash = '';
 }
 
 function goToMain() {
-    stopCameraPreview($('#createPreviewVideo').srcObject);
-    stopCameraPreview($('#joinPreviewVideo').srcObject);
-    stopCameraPreview($('#invitePreviewVideo').srcObject);
-    
-    $('#createScreen').classList.add('hidden');
-    $('#joinScreen').classList.add('hidden');
-    $('#inviteScreen').classList.add('hidden');
-    $('#scannerScreen').classList.add('hidden');
-    $('#mainScreen').classList.remove('hidden');
+    stopCameraPreview();
     stopScanner();
+    switchScreen('mainScreen');
 }
 
 // ===== Утилиты =====
@@ -971,39 +1248,9 @@ function generateRoomId() {
 }
 
 function generateMeetingLink() {
-    const base = `${window.location.origin}${window.location.pathname}`;
-    return `${base}#room=${AppState.roomId}&key=${AppState.encryptionKeyStr}`;
-}
-
-function checkUrlForRoom() {
-    const hash = window.location.hash.slice(1);
-    if (hash) {
-        const params = new URLSearchParams(hash);
-        const roomId = params.get('room');
-        const key = params.get('key');
-        
-        if (roomId) {
-            AppState.roomId = roomId;
-            if (key) {
-                AppState.encryptionKeyStr = key;
-                // Импортируем ключ
-                const keyBytes = Uint8Array.from(atob(key), c => c.charCodeAt(0));
-                CryptoModule.importKey(keyBytes);
-            }
-            
-            // Показываем экран приглашения
-            $('#mainScreen').classList.add('hidden');
-            $('#inviteScreen').classList.remove('hidden');
-            
-            // Генерируем QR
-            generateQRCode($('#inviteQRCanvas'), window.location.href);
-            
-            // Запускаем предпросмотр
-            if ($('#inviteCameraToggle').checked) {
-                startCameraPreview($('#invitePreviewVideo'), $('#inviteAvatarEmoji'));
-            }
-        }
-    }
+    const base = window.location.href.split('#')[0];
+    const cleanBase = base.replace(/index\.html$/, '');
+    return `${cleanBase}#room=${AppState.roomId}&key=${AppState.encryptionKeyStr}`;
 }
 
 function escapeHtml(text) {
