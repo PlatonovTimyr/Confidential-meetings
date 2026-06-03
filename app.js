@@ -1,4 +1,4 @@
-// ===== Confidential Meetings App v11 STABLE =====
+// ===== Confidential Meetings App v12 FINAL =====
 
 const AppState = {
     userName: '',
@@ -61,7 +61,7 @@ function dismissAlert() {
 
 // ===== Инициализация =====
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 Confidential Meetings v11 STABLE');
+    console.log('🚀 Confidential Meetings v12 FINAL');
     setupMainScreen();
     setupCreateScreen();
     setupJoinScreen();
@@ -134,6 +134,20 @@ function startSpeechDetection(stream, cardSelector) {
     } catch (e) { return null; }
 }
 
+// ===== Система уведомлений =====
+function showNotification(message, type = 'info') {
+    const statusBar = $('#meetingStatus');
+    if (statusBar) {
+        const originalText = statusBar.textContent;
+        statusBar.textContent = message;
+        statusBar.style.color = type === 'warning' ? 'var(--warning)' : type === 'danger' ? 'var(--danger)' : 'var(--success)';
+        setTimeout(() => {
+            statusBar.textContent = originalText;
+            statusBar.style.color = '';
+        }, 3000);
+    }
+}
+
 // ===== Главный экран =====
 function setupMainScreen() {
     $('#showCreateBtn')?.addEventListener('click', () => {
@@ -177,6 +191,7 @@ function setupCreateScreen() {
             initTrystero();
             switchScreen('meetingScreen');
             updateLocalDisplay();
+            updateHostUI();
             startTimer();
             startSecurityMonitoring();
             updateStatus('Защищённая встреча создана');
@@ -237,13 +252,12 @@ function setupInviteScreen() {
         try {
             stopCameraPreview();
             
-            // Сначала показываем экран встречи
             switchScreen('meetingScreen');
             updateLocalDisplay();
+            updateHostUI();
             startTimer();
             updateStatus('Подключение к защищённой встрече...');
             
-            // Затем захватываем медиа и подключаемся
             if (AppState.cameraEnabled) await captureMedia();
             initTrystero();
         } catch (error) { alert('Ошибка: ' + error.message); console.error(error); }
@@ -255,6 +269,22 @@ function setupInviteScreen() {
     });
 }
 
+// ===== Обновление UI в зависимости от роли =====
+function updateHostUI() {
+    const shareBtn = $('#shareBtn');
+    const sharePanel = $('#sharePanel');
+    
+    if (AppState.isHost) {
+        // Организатор видит кнопку "Поделиться"
+        if (shareBtn) shareBtn.style.display = 'flex';
+    } else {
+        // Участник НЕ видит кнопку "Поделиться"
+        if (shareBtn) shareBtn.style.display = 'none';
+        // Закрываем панель если была открыта
+        if (sharePanel) sharePanel.classList.add('hidden');
+    }
+}
+
 // ===== Экран встречи =====
 function setupMeetingScreen() {
     $('#micBtn')?.addEventListener('click', toggleMic);
@@ -262,6 +292,7 @@ function setupMeetingScreen() {
     $('#screenShareBtn')?.addEventListener('click', toggleScreenShare);
     
     $('#shareBtn')?.addEventListener('click', () => {
+        if (!AppState.isHost) return; // Участник не может открыть
         $('#sharePanel')?.classList.toggle('hidden');
         $('#chatPanel')?.classList.add('hidden');
     });
@@ -328,31 +359,70 @@ async function captureMedia() {
 
 // ===== Демонстрация экрана =====
 async function toggleScreenShare() {
-    if (AppState.screenSharing) { stopScreenShare(); return; }
+    if (AppState.screenSharing) {
+        stopScreenShare();
+        return;
+    }
     
     try {
         AppState.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+        
+        // Слушаем завершение демонстрации
         AppState.screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
         
+        // Показываем локально
         const screenShareVideo = $('#screenShareVideo');
         if (screenShareVideo) screenShareVideo.srcObject = AppState.screenStream;
         $('#screenShareCard')?.classList.remove('hidden');
         $('#screenShareBtn')?.classList.add('active');
         AppState.screenSharing = true;
         
+        // Отправляем экран ВСЕМ пирам
         const screenTrack = AppState.screenStream.getVideoTracks()[0];
-        AppState.peers.forEach((peer) => {
-            try { if (peer && peer.addTrack) peer.addTrack(screenTrack, AppState.localStream || undefined); } catch (e) {}
+        
+        AppState.peers.forEach((peer, peerId) => {
+            try {
+                // Заменяем или добавляем трек экрана
+                const senders = peer.getSenders();
+                const existingVideoSender = senders.find(s => 
+                    s.track && s.track.kind === 'video' && 
+                    !(s.track.label || '').includes('screen') &&
+                    !(s.track.label || '').includes('display')
+                );
+                
+                if (existingVideoSender) {
+                    // Создаём новый поток с экраном и заменяем
+                    peer.addTrack(screenTrack, AppState.localStream);
+                } else {
+                    peer.addTrack(screenTrack, AppState.localStream);
+                }
+            } catch (e) {
+                console.error('Ошибка отправки экрана пиру:', peerId, e);
+            }
         });
+        
+        showNotification('📺 Демонстрация экрана включена', 'info');
         updateStatus('📺 Демонстрация экрана запущена');
-    } catch (error) { console.error('Ошибка демонстрации:', error); }
+        
+    } catch (error) {
+        console.error('Ошибка демонстрации:', error);
+        alert('Не удалось начать демонстрацию экрана');
+    }
 }
 
 function stopScreenShare() {
-    if (AppState.screenStream) { AppState.screenStream.getTracks().forEach(t => t.stop()); AppState.screenStream = null; }
-    const screenShareVideo = $('#screenShareVideo'); if (screenShareVideo) screenShareVideo.srcObject = null;
-    $('#screenShareCard')?.classList.add('hidden'); $('#screenShareBtn')?.classList.remove('active');
+    if (AppState.screenStream) {
+        AppState.screenStream.getTracks().forEach(t => t.stop());
+        AppState.screenStream = null;
+    }
+    
+    const screenShareVideo = $('#screenShareVideo');
+    if (screenShareVideo) screenShareVideo.srcObject = null;
+    $('#screenShareCard')?.classList.add('hidden');
+    $('#screenShareBtn')?.classList.remove('active');
     AppState.screenSharing = false;
+    
+    showNotification('📺 Демонстрация экрана выключена', 'warning');
     updateStatus('Демонстрация экрана остановлена');
 }
 
@@ -362,7 +432,7 @@ function initTrystero() {
     
     console.log('Инициализация Trystero с комнатой:', AppState.roomId);
     
-    AppState.room = window.trysteroJoinRoom({ appId: 'conf-meet-v11-' + AppState.roomId }, 'meeting');
+    AppState.room = window.trysteroJoinRoom({ appId: 'conf-meet-v12-' + AppState.roomId }, 'meeting');
     
     const [sendSignal, getSignal] = AppState.room.makeAction('signal');
     const [sendChat, getChat] = AppState.room.makeAction('chat');
@@ -413,7 +483,7 @@ function initTrystero() {
         $('#screenShareCard')?.classList.add('hidden');
         $('#emptyState')?.classList.remove('hidden');
         AppState.isConnected = false;
-        updateStatus('Собеседник отключился');
+        showNotification('Собеседник отключился', 'warning');
         updateParticipantCount();
     });
 }
@@ -448,20 +518,23 @@ function createPeer(peerId, initiator) {
     peer.on('signal', (data) => { if (AppState.sendSignal) AppState.sendSignal(data); });
     
     peer.on('stream', (stream) => {
-        console.log('Получен удалённый поток');
+        console.log('Получен удалённый поток, дорожек:', stream.getTracks().length);
         
         const videoTracks = stream.getVideoTracks();
         const audioTracks = stream.getAudioTracks();
         
         if (videoTracks.length > 0) {
             const label = (videoTracks[0].label || '').toLowerCase();
+            console.log('Лейбл видеодорожки:', label);
             
-            if (label.includes('screen') || label.includes('display')) {
+            if (label.includes('screen') || label.includes('display') || label.includes('window')) {
+                // Это демонстрация экрана от собеседника
                 const screenShareVideo = $('#screenShareVideo');
                 if (screenShareVideo) screenShareVideo.srcObject = stream;
                 $('#screenShareCard')?.classList.remove('hidden');
-                updateStatus('📺 Собеседник демонстрирует экран');
+                showNotification('📺 Собеседник демонстрирует экран', 'info');
             } else {
+                // Это видео с камеры
                 const remoteVideo = $('#remoteVideo');
                 if (remoteVideo) { remoteVideo.srcObject = stream; remoteVideo.parentElement?.classList.remove('hidden'); }
                 $('#remoteAvatarWrapper')?.classList.add('hidden');
@@ -504,7 +577,18 @@ function createPeer(peerId, initiator) {
 function toggleMic() {
     if (AppState.localStream) {
         const audioTrack = AppState.localStream.getAudioTracks()[0];
-        if (audioTrack) { audioTrack.enabled = !audioTrack.enabled; AppState.micEnabled = audioTrack.enabled; updateMicButton(); }
+        if (audioTrack) {
+            audioTrack.enabled = !audioTrack.enabled;
+            AppState.micEnabled = audioTrack.enabled;
+            updateMicButton();
+            
+            // Уведомление
+            if (AppState.micEnabled) {
+                showNotification('🎤 Микрофон включен', 'info');
+            } else {
+                showNotification('🔇 Микрофон выключен', 'warning');
+            }
+        }
     }
 }
 
@@ -531,10 +615,12 @@ function toggleCamera() {
                 if (btn) btn.classList.remove('off');
                 $('#localVideo')?.parentElement?.classList.remove('hidden');
                 $('#localAvatarWrapper')?.classList.add('hidden');
+                showNotification('📹 Камера включена', 'info');
             } else {
                 if (btn) btn.classList.add('off');
                 $('#localVideo')?.parentElement?.classList.add('hidden');
                 $('#localAvatarWrapper')?.classList.remove('hidden');
+                showNotification('📷 Камера выключена', 'warning');
             }
             
             if (AppState.sendUserInfo) {
@@ -655,7 +741,7 @@ async function parseAndJoin(link) {
 async function joinRoom(roomId) {
     AppState.roomId = roomId;
     try {
-        switchScreen('meetingScreen'); updateLocalDisplay(); startTimer();
+        switchScreen('meetingScreen'); updateLocalDisplay(); updateHostUI(); startTimer();
         updateStatus('Подключение к защищённой встрече...');
         if (AppState.cameraEnabled) await captureMedia();
         initTrystero();
@@ -692,6 +778,7 @@ function checkUrlForRoom() {
 
 // ===== UI =====
 function updateLocalDisplay() {
+    // Только одна роль в подписи
     const role = AppState.isHost ? 'Организатор' : 'Участник';
     const localName = $('#localName'); if (localName) localName.textContent = (AppState.userName || 'Вы') + ' • ' + role;
     const localAvatarEmoji = $('#localAvatarEmoji'); if (localAvatarEmoji) localAvatarEmoji.textContent = AppState.userEmoji;
@@ -718,6 +805,7 @@ function updateRemoteUser(info) {
     const hasVideo = info.hasVideo !== undefined ? info.hasVideo : true;
     const emoji = info.emoji || '👤';
     
+    // Показываем роль только один раз
     const remoteName = $('#remoteName');
     if (remoteName) remoteName.textContent = name + (role ? ' • ' + role : '');
     
