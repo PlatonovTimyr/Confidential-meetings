@@ -24,23 +24,21 @@ const AppState = {
 };
 
 const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
 const EMOJIS = ['😊', '😎', '🤗', '😇', '🙂', '😄', '🥳', '😌', '🤩', '😁', '😺', '🦊', '🐱', '🐼', '🐨', '🦁', '🐯', '🐸', '🦄', '🐙'];
 
 // ===== Обработчик тревог =====
 window.onSecurityAlert = function(type, message, stats) {
-    console.error('🔴 ТРЕВОГА:', type, message);
+    console.error('ТРЕВОГА:', type, message);
     
     const overlay = $('#alertOverlay');
     const layout = $('#meetingLayout');
     
-    // Перекрашиваем интерфейс в красный
     layout.style.filter = 'hue-rotate(140deg) saturate(3) brightness(0.7)';
     layout.style.transition = 'all 0.5s ease';
     
-    // Показываем оверлей
     overlay.classList.remove('hidden');
     
-    // Заполняем информацию
     const icons = {
         'REPLAY_ATTACK': '🔄',
         'TIMING_ANOMALY': '⏰',
@@ -64,7 +62,6 @@ window.onSecurityAlert = function(type, message, stats) {
     
     $('#alertDetails').innerHTML = detailsHTML;
     
-    // Таймер автоотключения
     let countdown = 15;
     const timerEl = $('#alertTimer');
     const countdownInterval = setInterval(() => {
@@ -77,7 +74,6 @@ window.onSecurityAlert = function(type, message, stats) {
         }
     }, 1000);
     
-    // Кнопки
     $('#alertDismissBtn').onclick = () => {
         clearInterval(countdownInterval);
         dismissAlert();
@@ -113,32 +109,81 @@ function getRandomEmoji() {
     return EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
 }
 
+// ===== Предпросмотр камеры =====
+async function startCameraPreview(videoElement, avatarEmojiElement) {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+            audio: false
+        });
+        
+        videoElement.srcObject = stream;
+        videoElement.classList.remove('hidden');
+        if (avatarEmojiElement) avatarEmojiElement.classList.add('hidden');
+        
+        return stream;
+    } catch (error) {
+        console.log('Предпросмотр камеры недоступен:', error.message);
+        return null;
+    }
+}
+
+function stopCameraPreview(stream) {
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+    }
+}
+
 // ===== Главный экран =====
 function setupMainScreen() {
     $('#showCreateBtn').addEventListener('click', () => {
         AppState.userEmoji = getRandomEmoji();
-        $('#createAvatarDisplay .avatar-emoji-large').textContent = AppState.userEmoji;
+        $('#createAvatarEmoji').textContent = AppState.userEmoji;
         $('#mainScreen').classList.add('hidden');
         $('#createScreen').classList.remove('hidden');
+        
+        // Запускаем предпросмотр если камера включена
+        if ($('#createCameraToggle').checked) {
+            startCameraPreview($('#createPreviewVideo'), $('#createAvatarEmoji'));
+        }
     });
     
     $('#showJoinBtn').addEventListener('click', () => {
         AppState.userEmoji = getRandomEmoji();
-        $('#joinAvatarDisplay .avatar-emoji-large').textContent = AppState.userEmoji;
+        $('#joinAvatarEmoji').textContent = AppState.userEmoji;
         $('#mainScreen').classList.add('hidden');
         $('#joinScreen').classList.remove('hidden');
+        
+        if ($('#joinCameraToggle').checked) {
+            startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
+        }
     });
 }
 
 // ===== Экран создания =====
 function setupCreateScreen() {
+    // Переключение камеры
+    $('#createCameraToggle').addEventListener('change', function() {
+        if (this.checked) {
+            startCameraPreview($('#createPreviewVideo'), $('#createAvatarEmoji'));
+        } else {
+            stopCameraPreview($('#createPreviewVideo').srcObject);
+            $('#createPreviewVideo').classList.add('hidden');
+            $('#createAvatarEmoji').classList.remove('hidden');
+        }
+    });
+    
     $('#createMeetingBtn').addEventListener('click', async () => {
         const name = $('#createUserName').value.trim() || 'Организатор';
         AppState.userName = name;
         AppState.isHost = true;
         AppState.cameraEnabled = $('#createCameraToggle').checked;
+        AppState.micEnabled = $('#createMicToggle').checked;
         
         try {
+            // Останавливаем предпросмотр
+            stopCameraPreview($('#createPreviewVideo').srcObject);
+            
             // Генерируем ключи шифрования
             const keys = await CryptoModule.generateKeys();
             
@@ -173,18 +218,30 @@ function setupCreateScreen() {
     
     $('#changeCreateAvatar').addEventListener('click', () => {
         const emoji = getRandomEmoji();
-        $('#createAvatarDisplay .avatar-emoji-large').textContent = emoji;
+        $('#createAvatarEmoji').textContent = emoji;
         AppState.userEmoji = emoji;
     });
 }
 
 // ===== Экран присоединения =====
 function setupJoinScreen() {
+    // Переключение камеры
+    $('#joinCameraToggle').addEventListener('change', function() {
+        if (this.checked) {
+            startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
+        } else {
+            stopCameraPreview($('#joinPreviewVideo').srcObject);
+            $('#joinPreviewVideo').classList.add('hidden');
+            $('#joinAvatarEmoji').classList.remove('hidden');
+        }
+    });
+    
     $('#joinByLinkBtn').addEventListener('click', () => {
         $('#linkInputGroup').classList.remove('hidden');
     });
     
     $('#joinByQRBtn').addEventListener('click', () => {
+        stopCameraPreview($('#joinPreviewVideo').srcObject);
         $('#joinScreen').classList.add('hidden');
         $('#scannerScreen').classList.remove('hidden');
         startScanner();
@@ -194,12 +251,13 @@ function setupJoinScreen() {
         const link = $('#meetingLinkInput').value.trim();
         if (!link) return alert('Вставьте ссылку');
         
+        stopCameraPreview($('#joinPreviewVideo').srcObject);
         await parseAndJoin(link);
     });
     
     $('#changeJoinAvatar').addEventListener('click', () => {
         const emoji = getRandomEmoji();
-        $('#joinAvatarDisplay .avatar-emoji-large').textContent = emoji;
+        $('#joinAvatarEmoji').textContent = emoji;
         AppState.userEmoji = emoji;
     });
     
@@ -207,18 +265,35 @@ function setupJoinScreen() {
         $('#scannerScreen').classList.add('hidden');
         $('#joinScreen').classList.remove('hidden');
         stopScanner();
+        if ($('#joinCameraToggle').checked) {
+            startCameraPreview($('#joinPreviewVideo'), $('#joinAvatarEmoji'));
+        }
     });
 }
 
 // ===== Экран приглашения =====
 function setupInviteScreen() {
+    // Переключение камеры
+    $('#inviteCameraToggle').addEventListener('change', function() {
+        if (this.checked) {
+            startCameraPreview($('#invitePreviewVideo'), $('#inviteAvatarEmoji'));
+        } else {
+            stopCameraPreview($('#invitePreviewVideo').srcObject);
+            $('#invitePreviewVideo').classList.add('hidden');
+            $('#inviteAvatarEmoji').classList.remove('hidden');
+        }
+    });
+    
     $('#inviteConnectBtn').addEventListener('click', async () => {
         AppState.userName = $('#inviteUserName').value.trim() || 'Гость';
         AppState.cameraEnabled = $('#inviteCameraToggle').checked;
+        AppState.micEnabled = $('#inviteMicToggle').checked;
         
         if (!AppState.roomId) return alert('Не найдена комната');
         
         try {
+            stopCameraPreview($('#invitePreviewVideo').srcObject);
+            
             if (AppState.cameraEnabled) {
                 await captureMedia();
             }
@@ -237,9 +312,14 @@ function setupInviteScreen() {
     
     $('#changeInviteAvatar').addEventListener('click', () => {
         const emoji = getRandomEmoji();
-        $('#inviteAvatarDisplay .avatar-emoji-medium').textContent = emoji;
+        $('#inviteAvatarEmoji').textContent = emoji;
         AppState.userEmoji = emoji;
     });
+    
+    // Запускаем предпросмотр при загрузке
+    if ($('#inviteCameraToggle').checked) {
+        startCameraPreview($('#invitePreviewVideo'), $('#inviteAvatarEmoji'));
+    }
 }
 
 // ===== Экран встречи =====
@@ -272,15 +352,24 @@ function setupMeetingScreen() {
         }, 1500);
     });
     
-    $('#sendMessageBtn').addEventListener('click', sendEncryptedMessage);
+    $('#sendMessageBtn').addEventListener('click', sendChatMessage);
     $('#chatInput').addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendEncryptedMessage();
+        if (e.key === 'Enter') sendChatMessage();
     });
     
     $('#changeLocalAvatar').addEventListener('click', () => {
         const emoji = getRandomEmoji();
         $('#localAvatarEmoji').textContent = emoji;
         AppState.userEmoji = emoji;
+        
+        // Отправляем новый эмодзи собеседнику
+        if (AppState.sendUserInfo) {
+            AppState.sendUserInfo({
+                name: AppState.userName,
+                hasVideo: AppState.cameraEnabled,
+                emoji: AppState.userEmoji
+            });
+        }
     });
 }
 
@@ -292,9 +381,18 @@ async function captureMedia() {
             audio: true
         });
         
+        // Применяем настройку микрофона
+        const audioTrack = AppState.localStream.getAudioTracks()[0];
+        if (audioTrack) {
+            audioTrack.enabled = AppState.micEnabled;
+        }
+        
         $('#localVideo').srcObject = AppState.localStream;
         $('#localVideo').parentElement.classList.remove('hidden');
         $('#localAvatarWrapper').classList.add('hidden');
+        
+        // Обновляем кнопку микрофона
+        updateMicButton();
         
     } catch (error) {
         console.error('Ошибка камеры:', error);
@@ -317,24 +415,38 @@ async function toggleScreenShare() {
             audio: false
         });
         
+        // Отслеживаем завершение демонстрации
         AppState.screenStream.getVideoTracks()[0].onended = () => {
             stopScreenShare();
         };
         
-        // Добавляем экран как дополнительный поток
+        // Показываем локально
         $('#screenShareVideo').srcObject = AppState.screenStream;
         $('#screenShareCard').classList.remove('hidden');
         $('#screenShareBtn').classList.add('active');
         AppState.screenSharing = true;
         
-        // Отправляем экран всем пирам
-        AppState.peers.forEach(peer => {
-            const screenTrack = AppState.screenStream.getVideoTracks()[0];
-            peer.addTrack(screenTrack, AppState.localStream);
+        // Добавляем трек экрана во все существующие peer-соединения
+        const screenTrack = AppState.screenStream.getVideoTracks()[0];
+        
+        AppState.peers.forEach((peer) => {
+            try {
+                // Удаляем старый экранный трек если есть
+                const senders = peer.getSenders();
+                const existingSender = senders.find(s => s.track && s.track.kind === 'video' && s.track.label.includes('screen'));
+                if (existingSender) {
+                    existingSender.replaceTrack(screenTrack);
+                } else {
+                    peer.addTrack(screenTrack, AppState.localStream || undefined);
+                }
+            } catch (e) {
+                console.error('Ошибка добавления трека экрана:', e);
+            }
         });
         
     } catch (error) {
         console.error('Ошибка демонстрации:', error);
+        alert('Не удалось начать демонстрацию экрана');
     }
 }
 
@@ -343,6 +455,7 @@ function stopScreenShare() {
         AppState.screenStream.getTracks().forEach(t => t.stop());
         AppState.screenStream = null;
     }
+    $('#screenShareVideo').srcObject = null;
     $('#screenShareCard').classList.add('hidden');
     $('#screenShareBtn').classList.remove('active');
     AppState.screenSharing = false;
@@ -351,7 +464,7 @@ function stopScreenShare() {
 // ===== Trystero =====
 function initTrystero() {
     AppState.room = window.trysteroJoinRoom({
-        appId: 'conf-meet-v3-' + AppState.roomId
+        appId: 'conf-meet-v4-' + AppState.roomId
     }, 'meeting');
     
     const [sendSignal, getSignal] = AppState.room.makeAction('signal');
@@ -362,28 +475,34 @@ function initTrystero() {
     AppState.sendChatMsg = sendChat;
     AppState.sendUserInfo = sendUserInfo;
     
+    // Получаем сигналы WebRTC
     getSignal((data, peerId) => handleSignal(peerId, data));
     
-    getChat(async (data) => {
-        if (data.encrypted) {
-            const decrypted = await CryptoModule.decryptMessage(data);
-            if (decrypted) {
-                displayChatMessage(data.sender, decrypted, false);
-            }
+    // Получаем сообщения чата
+    getChat((data) => {
+        console.log('Получено сообщение чата:', data);
+        if (data && data.text) {
+            displayChatMessage(data.sender, data.text, false);
         }
     });
     
+    // Получаем информацию о пользователе
     getUserInfo((info) => {
-        updateRemoteUser(info.name, info.hasVideo);
+        console.log('Получена информация о пользователе:', info);
+        updateRemoteUser(info);
     });
     
     AppState.room.onPeerJoin((peerId) => {
         console.log('Новый участник:', peerId);
+        
+        // Отправляем информацию о себе
         sendUserInfo({
             name: AppState.userName,
-            hasVideo: AppState.cameraEnabled
+            hasVideo: AppState.cameraEnabled,
+            emoji: AppState.userEmoji
         });
         
+        // Если мы гость - инициируем соединение
         if (!AppState.isHost) {
             createPeer(peerId, true);
         }
@@ -396,6 +515,7 @@ function initTrystero() {
         
         $('#remoteVideo').srcObject = null;
         $('#remoteCard').classList.add('hidden');
+        $('#screenShareCard').classList.add('hidden');
         $('#emptyState').classList.remove('hidden');
         AppState.isConnected = false;
         updateStatus('Собеседник отключился');
@@ -416,14 +536,14 @@ function handleSignal(peerId, signalData) {
 }
 
 function createPeer(peerId, initiator) {
-    const streams = [AppState.localStream];
-    if (AppState.screenStream) {
-        streams.push(AppState.screenStream);
-    }
+    // Создаём массив потоков
+    const streams = [];
+    if (AppState.localStream) streams.push(AppState.localStream);
+    if (AppState.screenStream) streams.push(AppState.screenStream);
     
     const peer = new SimplePeer({
         initiator,
-        streams: streams.filter(s => s),
+        streams: streams,
         trickle: true,
         config: {
             iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -435,13 +555,19 @@ function createPeer(peerId, initiator) {
     });
     
     peer.on('stream', (stream) => {
-        // Определяем, видео это или экран
-        if (stream.getVideoTracks().length > 0) {
-            const track = stream.getVideoTracks()[0];
-            if (track.label.includes('screen') || track.label.includes('display')) {
+        console.log('Получен поток:', stream);
+        
+        // Определяем тип потока
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+            const label = videoTrack.label || '';
+            
+            if (label.includes('screen') || label.includes('display') || label.includes('window')) {
+                // Это демонстрация экрана
                 $('#screenShareVideo').srcObject = stream;
                 $('#screenShareCard').classList.remove('hidden');
             } else {
+                // Это видео с камеры
                 $('#remoteVideo').srcObject = stream;
                 $('#remoteVideo').parentElement.classList.remove('hidden');
                 $('#remoteAvatarWrapper').classList.add('hidden');
@@ -460,7 +586,9 @@ function createPeer(peerId, initiator) {
     peer.on('close', () => {
         AppState.peers.delete(peerId);
         $('#remoteVideo').srcObject = null;
+        $('#screenShareVideo').srcObject = null;
         $('#remoteCard').classList.add('hidden');
+        $('#screenShareCard').classList.add('hidden');
         $('#emptyState').classList.remove('hidden');
         AppState.isConnected = false;
         updateStatus('Собеседник отключился');
@@ -469,7 +597,6 @@ function createPeer(peerId, initiator) {
     
     peer.on('error', (err) => {
         console.error('Peer error:', err);
-        CryptoModule.triggerAlert('CONNECTION_ERROR', 'Ошибка соединения: ' + err.message);
         updateStatus('Ошибка соединения');
     });
     
@@ -484,18 +611,21 @@ function toggleMic() {
         if (audioTrack) {
             audioTrack.enabled = !audioTrack.enabled;
             AppState.micEnabled = audioTrack.enabled;
-            
-            const btn = $('#micBtn');
-            const icon = $('#localMicIcon');
-            
-            if (AppState.micEnabled) {
-                btn.classList.remove('off');
-                icon.className = 'fas fa-microphone';
-            } else {
-                btn.classList.add('off');
-                icon.className = 'fas fa-microphone-slash mic-off';
-            }
+            updateMicButton();
         }
+    }
+}
+
+function updateMicButton() {
+    const btn = $('#micBtn');
+    const icon = $('#localMicIcon');
+    
+    if (AppState.micEnabled) {
+        btn.classList.remove('off');
+        if (icon) icon.className = 'fas fa-microphone';
+    } else {
+        btn.classList.add('off');
+        if (icon) icon.className = 'fas fa-microphone-slash mic-off';
     }
 }
 
@@ -517,28 +647,40 @@ function toggleCamera() {
                 $('#localVideo').parentElement.classList.add('hidden');
                 $('#localAvatarWrapper').classList.remove('hidden');
             }
+            
+            // Отправляем обновлённую информацию
+            if (AppState.sendUserInfo) {
+                AppState.sendUserInfo({
+                    name: AppState.userName,
+                    hasVideo: AppState.cameraEnabled,
+                    emoji: AppState.userEmoji
+                });
+            }
         }
     }
 }
 
-// ===== Зашифрованный чат =====
-async function sendEncryptedMessage() {
+// ===== Чат =====
+function sendChatMessage() {
     const text = $('#chatInput').value.trim();
     if (!text) return;
     
-    // Шифруем сообщение
-    const encrypted = await CryptoModule.encryptMessage(text);
+    console.log('Отправка сообщения:', text);
     
+    // Отображаем своё сообщение
     displayChatMessage(AppState.userName, text, true);
     
+    // Отправляем через Trystero
     if (AppState.sendChatMsg) {
         AppState.sendChatMsg({
             sender: AppState.userName,
-            encrypted: encrypted
+            text: text,
+            timestamp: Date.now()
         });
     }
     
     $('#chatInput').value = '';
+    $('#chatInput').focus();
 }
 
 function displayChatMessage(sender, text, isMine) {
@@ -554,39 +696,6 @@ function displayChatMessage(sender, text, isMine) {
     
     $('#chatMessages').appendChild(msgDiv);
     $('#chatMessages').scrollTop = $('#chatMessages').scrollHeight;
-}
-
-// ===== Мониторинг безопасности =====
-function startSecurityMonitoring() {
-    AppState.securityCheckInterval = setInterval(() => {
-        const stats = CryptoModule.securityStats;
-        
-        // Проверяем количество ошибок
-        if (stats.invalidSignatures > 3) {
-            CryptoModule.triggerAlert('MANY_INVALID_SIGNATURES', 
-                'Слишком много недействительных подписей! Возможна MITM-атака.');
-        }
-        
-        if (stats.replayAttacks > 2) {
-            CryptoModule.triggerAlert('MANY_REPLAYS', 
-                'Обнаружено множество replay-атак! Кто-то пытается перехватить соединение.');
-        }
-        
-        // Обновляем индикаторы
-        updateSecurityIndicators();
-        
-    }, 3000);
-}
-
-function updateSecurityIndicators() {
-    const stats = CryptoModule.securityStats;
-    const indicators = $$('.security-ok');
-    
-    if (indicators.length >= 3) {
-        indicators[0].style.color = stats.hashMismatches === 0 ? 'var(--success)' : 'var(--danger)';
-        indicators[1].style.color = stats.invalidSignatures === 0 ? 'var(--success)' : 'var(--danger)';
-        indicators[2].style.color = stats.timingAnomalies < 5 ? 'var(--success)' : 'var(--warning)';
-    }
 }
 
 // ===== QR =====
@@ -668,6 +777,7 @@ async function parseAndJoin(link) {
         AppState.roomId = roomId;
         AppState.userName = $('#joinUserName').value.trim() || 'Гость';
         AppState.cameraEnabled = $('#joinCameraToggle').checked;
+        AppState.micEnabled = $('#joinMicToggle').checked;
         
         // Импортируем ключ шифрования если есть
         if (key) {
@@ -729,10 +839,25 @@ function updateLocalDisplay() {
     if (AppState.isHost) {
         $('#hostChip').classList.remove('hidden');
     }
+    
+    updateMicButton();
 }
 
-function updateRemoteUser(name, hasVideo) {
-    $('#remoteName').textContent = name || 'Собеседник';
+function updateRemoteUser(info) {
+    console.log('Обновление информации о пользователе:', info);
+    
+    const name = info.name || 'Собеседник';
+    const hasVideo = info.hasVideo !== undefined ? info.hasVideo : true;
+    const emoji = info.emoji || '👤';
+    
+    $('#remoteName').textContent(name);
+    
+    // Обновляем эмодзи собеседника
+    const remoteEmojiEl = $('#remoteAvatarWrapper .avatar-emoji');
+    if (remoteEmojiEl) {
+        remoteEmojiEl.textContent = emoji;
+    }
+    
     $('#remoteCard').classList.remove('hidden');
     $('#emptyState').classList.add('hidden');
     
@@ -750,6 +875,37 @@ function updateParticipantCount() {
 
 function updateStatus(text) {
     $('#meetingStatus').textContent = text;
+}
+
+// ===== Мониторинг безопасности =====
+function startSecurityMonitoring() {
+    AppState.securityCheckInterval = setInterval(() => {
+        const stats = CryptoModule.securityStats;
+        
+        if (stats.invalidSignatures > 3) {
+            CryptoModule.triggerAlert('MANY_INVALID_SIGNATURES', 
+                'Слишком много недействительных подписей!');
+        }
+        
+        if (stats.replayAttacks > 2) {
+            CryptoModule.triggerAlert('MANY_REPLAYS', 
+                'Обнаружено множество replay-атак!');
+        }
+        
+        updateSecurityIndicators();
+        
+    }, 3000);
+}
+
+function updateSecurityIndicators() {
+    const stats = CryptoModule.securityStats;
+    const indicators = $$('.security-ok');
+    
+    if (indicators.length >= 3) {
+        indicators[0].style.color = stats.hashMismatches === 0 ? 'var(--success)' : 'var(--danger)';
+        indicators[1].style.color = stats.invalidSignatures === 0 ? 'var(--success)' : 'var(--danger)';
+        indicators[2].style.color = stats.timingAnomalies < 5 ? 'var(--success)' : 'var(--warning)';
+    }
 }
 
 // ===== Таймер =====
@@ -797,6 +953,10 @@ function hangUp() {
 }
 
 function goToMain() {
+    stopCameraPreview($('#createPreviewVideo').srcObject);
+    stopCameraPreview($('#joinPreviewVideo').srcObject);
+    stopCameraPreview($('#invitePreviewVideo').srcObject);
+    
     $('#createScreen').classList.add('hidden');
     $('#joinScreen').classList.add('hidden');
     $('#inviteScreen').classList.add('hidden');
@@ -826,6 +986,9 @@ function checkUrlForRoom() {
             AppState.roomId = roomId;
             if (key) {
                 AppState.encryptionKeyStr = key;
+                // Импортируем ключ
+                const keyBytes = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+                CryptoModule.importKey(keyBytes);
             }
             
             // Показываем экран приглашения
@@ -834,6 +997,11 @@ function checkUrlForRoom() {
             
             // Генерируем QR
             generateQRCode($('#inviteQRCanvas'), window.location.href);
+            
+            // Запускаем предпросмотр
+            if ($('#inviteCameraToggle').checked) {
+                startCameraPreview($('#invitePreviewVideo'), $('#inviteAvatarEmoji'));
+            }
         }
     }
 }
