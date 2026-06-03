@@ -112,7 +112,7 @@ MIT License — свободное использование
 
 ## 👤 Автор
 
-**Timyr** — [GitHub](https://github.com/Timyr)
+**PlatonovTimyr** — [GitHub](https://github.com/PlatonovTimyr)
 
 ---
 
