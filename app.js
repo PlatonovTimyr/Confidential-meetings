@@ -42,33 +42,23 @@ window.onSecurityAlert = function(type, message, stats) {
     
     if (overlay) overlay.classList.remove('hidden');
     
-    const icons = {
-        'REPLAY_ATTACK': '🔄',
-        'TIMING_ANOMALY': '⏰',
-        'SEQUENCE_ERROR': '📊',
-        'INVALID_SIGNATURE': '✍️',
-        'HASH_MISMATCH': '🔍',
-        'DECRYPTION_ERROR': '🔓'
-    };
-    
     const alertIcon = $('#alertIcon');
     const alertTitle = $('#alertTitle');
     const alertMessage = $('#alertMessage');
     const alertDetails = $('#alertDetails');
     
-    if (alertIcon) alertIcon.textContent = icons[type] || '⚠️';
+    if (alertIcon) alertIcon.textContent = '⚠️';
     if (alertTitle) alertTitle.textContent = 'ОБНАРУЖЕНА АНОМАЛИЯ!';
     if (alertMessage) alertMessage.textContent = message;
     
-    let detailsHTML = '<div class="alert-stats">';
-    detailsHTML += `<p>Недействительных подписей: <strong>${stats.invalidSignatures}</strong></p>`;
-    detailsHTML += `<p>Replay-атак: <strong>${stats.replayAttacks}</strong></p>`;
-    detailsHTML += `<p>Аномалий времени: <strong>${stats.timingAnomalies}</strong></p>`;
-    detailsHTML += `<p>Несовпадений хеша: <strong>${stats.hashMismatches}</strong></p>`;
-    detailsHTML += `<p>Всего кадров: <strong>${stats.totalFrames}</strong></p>`;
-    detailsHTML += '</div>';
-    
-    if (alertDetails) alertDetails.innerHTML = detailsHTML;
+    if (alertDetails && stats) {
+        let detailsHTML = '<div class="alert-stats">';
+        detailsHTML += `<p>Недействительных подписей: <strong>${stats.invalidSignatures}</strong></p>`;
+        detailsHTML += `<p>Replay-атак: <strong>${stats.replayAttacks}</strong></p>`;
+        detailsHTML += `<p>Аномалий времени: <strong>${stats.timingAnomalies}</strong></p>`;
+        detailsHTML += '</div>';
+        alertDetails.innerHTML = detailsHTML;
+    }
     
     let countdown = 15;
     const timerEl = $('#alertTimer');
@@ -123,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupInviteScreen();
     setupMeetingScreen();
     
-    // Проверяем URL с задержкой для надёжности
+    // Проверяем URL с задержкой
     setTimeout(() => {
         const hasRoom = checkUrlForRoom();
         if (!hasRoom) {
@@ -143,7 +133,6 @@ async function startCameraPreview(videoElement, avatarEmojiElement) {
     if (!videoElement) return null;
     
     try {
-        // Останавливаем предыдущий предпросмотр
         stopCameraPreview();
         
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -172,6 +161,17 @@ function stopCameraPreview() {
     }
 }
 
+function switchScreen(screenId) {
+    const screens = ['mainScreen', 'createScreen', 'joinScreen', 'inviteScreen', 'meetingScreen', 'scannerScreen'];
+    screens.forEach(id => {
+        const el = $('#' + id);
+        if (el) el.classList.add('hidden');
+    });
+    
+    const target = $('#' + screenId);
+    if (target) target.classList.remove('hidden');
+}
+
 // ===== Главный экран =====
 function setupMainScreen() {
     const showCreateBtn = $('#showCreateBtn');
@@ -185,7 +185,6 @@ function setupMainScreen() {
             
             switchScreen('createScreen');
             
-            // Запускаем предпросмотр если камера включена
             const cameraToggle = $('#createCameraToggle');
             if (cameraToggle && cameraToggle.checked) {
                 startCameraPreview($('#createPreviewVideo'), $('#createAvatarEmoji'));
@@ -207,17 +206,6 @@ function setupMainScreen() {
             }
         });
     }
-}
-
-function switchScreen(screenId) {
-    const screens = ['mainScreen', 'createScreen', 'joinScreen', 'inviteScreen', 'meetingScreen', 'scannerScreen'];
-    screens.forEach(id => {
-        const el = $('#' + id);
-        if (el) el.classList.add('hidden');
-    });
-    
-    const target = $('#' + screenId);
-    if (target) target.classList.remove('hidden');
 }
 
 // ===== Экран создания =====
@@ -249,7 +237,6 @@ function setupCreateScreen() {
             try {
                 stopCameraPreview();
                 
-                // Генерируем ключи шифрования
                 if (typeof CryptoModule !== 'undefined') {
                     const keys = await CryptoModule.generateKeys();
                     AppState.encryptionKeyStr = btoa(String.fromCharCode(...new Uint8Array(keys.encryptionKey)));
@@ -265,7 +252,6 @@ function setupCreateScreen() {
                 switchScreen('meetingScreen');
                 updateLocalDisplay();
                 startTimer();
-                startSecurityMonitoring();
                 updateStatus('Защищённая встреча создана');
                 
                 const link = generateMeetingLink();
@@ -395,19 +381,22 @@ function setupInviteScreen() {
             try {
                 stopCameraPreview();
                 
+                // Сначала показываем экран встречи
+                switchScreen('meetingScreen');
+                updateLocalDisplay();
+                startTimer();
+                updateStatus('Подключение к защищённой встрече...');
+                
+                // Затем захватываем медиа и подключаемся
                 if (AppState.cameraEnabled) {
                     await captureMedia();
                 }
                 
                 initTrystero();
-                switchScreen('meetingScreen');
-                updateLocalDisplay();
-                startTimer();
-                startSecurityMonitoring();
-                updateStatus('Подключение к защищённой встрече...');
                 
             } catch (error) {
                 alert('Ошибка: ' + error.message);
+                console.error(error);
             }
         });
     }
@@ -579,24 +568,14 @@ async function toggleScreenShare() {
         
         AppState.peers.forEach((peer) => {
             try {
-                const senders = peer.getSenders();
-                const existingSender = senders.find(s => 
-                    s.track && s.track.kind === 'video' && 
-                    (s.track.label || '').includes('screen')
-                );
-                if (existingSender) {
-                    existingSender.replaceTrack(screenTrack);
-                } else {
-                    peer.addTrack(screenTrack, AppState.localStream || undefined);
-                }
+                peer.addTrack(screenTrack, AppState.localStream || undefined);
             } catch (e) {
-                console.error('Ошибка добавления трека экрана:', e);
+                console.error('Ошибка добавления трека:', e);
             }
         });
         
     } catch (error) {
         console.error('Ошибка демонстрации:', error);
-        alert('Не удалось начать демонстрацию экрана');
     }
 }
 
@@ -626,8 +605,10 @@ function initTrystero() {
         return;
     }
     
+    console.log('Инициализация Trystero с комнатой:', AppState.roomId);
+    
     AppState.room = window.trysteroJoinRoom({
-        appId: 'conf-meet-v5-' + AppState.roomId
+        appId: 'conf-meet-v6-' + AppState.roomId
     }, 'meeting');
     
     const [sendSignal, getSignal] = AppState.room.makeAction('signal');
@@ -638,7 +619,10 @@ function initTrystero() {
     AppState.sendChatMsg = sendChat;
     AppState.sendUserInfo = sendUserInfo;
     
-    getSignal((data, peerId) => handleSignal(peerId, data));
+    getSignal((data, peerId) => {
+        console.log('Получен сигнал от:', peerId);
+        handleSignal(peerId, data);
+    });
     
     getChat((data) => {
         console.log('Получено сообщение чата:', data);
@@ -653,20 +637,24 @@ function initTrystero() {
     });
     
     AppState.room.onPeerJoin((peerId) => {
-        console.log('Новый участник:', peerId);
+        console.log('Новый участник присоединился:', peerId);
         
+        // Отправляем информацию о себе
         sendUserInfo({
             name: AppState.userName,
             hasVideo: AppState.cameraEnabled,
             emoji: AppState.userEmoji
         });
         
+        // Если мы гость - инициируем WebRTC соединение
         if (!AppState.isHost) {
+            console.log('Гость инициирует соединение...');
             createPeer(peerId, true);
         }
     });
     
     AppState.room.onPeerLeave((peerId) => {
+        console.log('Участник отключился:', peerId);
         const peer = AppState.peers.get(peerId);
         if (peer) peer.destroy();
         AppState.peers.delete(peerId);
@@ -691,8 +679,13 @@ function initTrystero() {
 
 // ===== WebRTC сигналы =====
 function handleSignal(peerId, signalData) {
+    console.log('Обработка сигнала от:', peerId);
     let peer = AppState.peers.get(peerId);
-    if (!peer) peer = createPeer(peerId, false);
+    
+    if (!peer) {
+        console.log('Создание нового peer для:', peerId);
+        peer = createPeer(peerId, AppState.isHost); // Хост НЕ инициирует
+    }
     
     try {
         peer.signal(signalData);
@@ -702,12 +695,14 @@ function handleSignal(peerId, signalData) {
 }
 
 function createPeer(peerId, initiator) {
+    console.log('Создание peer, инициатор:', initiator);
+    
     const streams = [];
     if (AppState.localStream) streams.push(AppState.localStream);
     if (AppState.screenStream) streams.push(AppState.screenStream);
     
     const peer = new SimplePeer({
-        initiator,
+        initiator: initiator,
         streams: streams,
         trickle: true,
         config: {
@@ -716,17 +711,18 @@ function createPeer(peerId, initiator) {
     });
     
     peer.on('signal', (data) => {
+        console.log('Отправка сигнала');
         if (AppState.sendSignal) AppState.sendSignal(data);
     });
     
     peer.on('stream', (stream) => {
-        console.log('Получен поток');
+        console.log('Получен удалённый поток');
         
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
             const label = videoTrack.label || '';
             
-            if (label.includes('screen') || label.includes('display') || label.includes('window')) {
+            if (label.includes('screen') || label.includes('display')) {
                 const screenShareVideo = $('#screenShareVideo');
                 if (screenShareVideo) screenShareVideo.srcObject = stream;
                 const screenShareCard = $('#screenShareCard');
@@ -754,9 +750,13 @@ function createPeer(peerId, initiator) {
         updateParticipantCount();
     });
     
-    peer.on('connect', () => updateStatus('🔄 Установка защищённого канала...'));
+    peer.on('connect', () => {
+        console.log('Peer соединение установлено');
+        updateStatus('🔄 Установка защищённого канала...');
+    });
     
     peer.on('close', () => {
+        console.log('Peer закрыт:', peerId);
         AppState.peers.delete(peerId);
         const remoteVideo = $('#remoteVideo');
         if (remoteVideo) remoteVideo.srcObject = null;
@@ -770,8 +770,8 @@ function createPeer(peerId, initiator) {
     });
     
     peer.on('error', (err) => {
-        console.error('Peer error:', err);
-        updateStatus('Ошибка соединения');
+        console.error('Peer ошибка:', err);
+        updateStatus('Ошибка соединения: ' + err.message);
     });
     
     AppState.peers.set(peerId, peer);
@@ -953,7 +953,7 @@ function stopScanner() {
 // ===== Парсинг ссылки =====
 function parseHashParams() {
     const hash = window.location.hash;
-    console.log('🔍 Парсинг хеша:', hash);
+    console.log('Парсинг хеша:', hash);
     
     if (!hash || hash === '#') return null;
     
@@ -962,8 +962,6 @@ function parseHashParams() {
     
     const roomId = params.get('room');
     const key = params.get('key');
-    
-    console.log('Извлечено:', { roomId, key });
     
     if (roomId) {
         return { roomId, key };
@@ -995,6 +993,7 @@ async function parseAndJoin(link) {
         if (!roomId) return alert('Неверная ссылка');
         
         AppState.roomId = roomId;
+        AppState.isHost = false;
         AppState.userName = ($('#joinUserName') && $('#joinUserName').value.trim()) || 'Гость';
         AppState.cameraEnabled = $('#joinCameraToggle') ? $('#joinCameraToggle').checked : true;
         AppState.micEnabled = $('#joinMicToggle') ? $('#joinMicToggle').checked : true;
@@ -1002,12 +1001,15 @@ async function parseAndJoin(link) {
         if (key) {
             AppState.encryptionKeyStr = key;
             if (typeof CryptoModule !== 'undefined') {
-                const keyBytes = Uint8Array.from(atob(key), c => c.charCodeAt(0));
-                await CryptoModule.importKey(keyBytes);
+                try {
+                    const keyBytes = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+                    await CryptoModule.importKey(keyBytes);
+                } catch (e) {
+                    console.error('Ошибка импорта ключа:', e);
+                }
             }
         }
         
-        switchScreen('meetingScreen');
         await joinRoom(roomId);
         
     } catch (e) {
@@ -1015,47 +1017,53 @@ async function parseAndJoin(link) {
     }
 }
 
-// ===== Присоединение =====
+// ===== Присоединение к комнате =====
 async function joinRoom(roomId) {
     AppState.roomId = roomId;
     
     try {
+        // Сначала показываем экран встречи
+        switchScreen('meetingScreen');
+        updateLocalDisplay();
+        startTimer();
+        updateStatus('Подключение к защищённой встрече...');
+        
+        // Захватываем медиа
         if (AppState.cameraEnabled) {
             await captureMedia();
         }
         
+        // Инициализируем Trystero
         initTrystero();
-        updateLocalDisplay();
-        startTimer();
-        startSecurityMonitoring();
-        updateStatus('Подключение к защищённой встрече...');
         
     } catch (error) {
         alert('Ошибка: ' + error.message);
+        console.error(error);
     }
 }
 
 // ===== Проверка URL при загрузке =====
 function checkUrlForRoom() {
-    console.log('🔍 Проверка URL при загрузке...');
+    console.log('Проверка URL при загрузке...');
     console.log('Текущий URL:', window.location.href);
     
     const parsed = parseHashParams();
     
     if (parsed && parsed.roomId) {
-        console.log('✅ Найдена комната:', parsed.roomId);
+        console.log('Найдена комната:', parsed.roomId);
         
         AppState.roomId = parsed.roomId;
+        AppState.isHost = false;
         
         if (parsed.key) {
-            console.log('🔑 Найден ключ шифрования');
+            console.log('Найден ключ шифрования');
             AppState.encryptionKeyStr = parsed.key;
             
             try {
                 if (typeof CryptoModule !== 'undefined') {
                     const keyBytes = Uint8Array.from(atob(parsed.key), c => c.charCodeAt(0));
                     CryptoModule.importKey(keyBytes);
-                    console.log('✅ Ключ импортирован');
+                    console.log('Ключ импортирован');
                 }
             } catch (e) {
                 console.error('Ошибка импорта ключа:', e);
@@ -1086,7 +1094,7 @@ function checkUrlForRoom() {
         return true;
     }
     
-    console.log('❌ Комната не найдена в URL');
+    console.log('Комната не найдена в URL');
     return false;
 }
 
@@ -1187,6 +1195,7 @@ function startSecurityMonitoring() {
 // ===== Таймер =====
 function startTimer() {
     AppState.startTime = Date.now();
+    if (AppState.timerInterval) clearInterval(AppState.timerInterval);
     AppState.timerInterval = setInterval(() => {
         const elapsed = Math.floor((Date.now() - AppState.startTime) / 1000);
         const mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
@@ -1198,11 +1207,13 @@ function startTimer() {
 
 // ===== Завершение =====
 function hangUp() {
-    AppState.peers.forEach(peer => peer.destroy());
+    AppState.peers.forEach(peer => {
+        try { peer.destroy(); } catch(e) {}
+    });
     AppState.peers.clear();
     
     if (AppState.room) {
-        AppState.room.leave();
+        try { AppState.room.leave(); } catch(e) {}
         AppState.room = null;
     }
     
