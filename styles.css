@@ -112,7 +112,6 @@ body {
     padding: 20px;
     border: 1px solid var(--border);
     transition: var(--transition);
-    cursor: pointer;
 }
 
 .action-card:active {
@@ -664,10 +663,24 @@ input:checked + .slider:before { transform: translateX(20px); }
     overflow: hidden;
     aspect-ratio: 4/3;
     border: 2px solid transparent;
+    transition: border-color 0.3s, box-shadow 0.3s;
 }
 
 .participant-card.local { border-color: var(--accent); }
 .participant-card.remote { border-color: var(--success); }
+
+/* Индикатор речи */
+@keyframes speakingGlow {
+    0%, 100% { border-color: #6c5ce7; box-shadow: 0 0 8px rgba(108, 92, 231, 0.4); }
+    25% { border-color: #00b894; box-shadow: 0 0 12px rgba(0, 184, 148, 0.5); }
+    50% { border-color: #fdcb6e; box-shadow: 0 0 16px rgba(253, 203, 110, 0.6); }
+    75% { border-color: #ff4757; box-shadow: 0 0 12px rgba(255, 71, 87, 0.5); }
+}
+
+.participant-card.speaking {
+    animation: speakingGlow 1.5s infinite;
+    border-width: 3px;
+}
 
 .video-wrapper {
     width: 100%;
@@ -1136,8 +1149,6 @@ input:checked + .slider:before { transform: translateX(20px); }
 .hidden { display: none !important; }
 
 /* ===== Адаптивность ===== */
-
-/* Планшеты */
 @media (max-width: 768px) {
     .action-cards {
         grid-template-columns: 1fr;
@@ -1201,7 +1212,6 @@ input:checked + .slider:before { transform: translateX(20px); }
     }
 }
 
-/* Телефоны */
 @media (max-width: 480px) {
     .main-container {
         padding: 15px 10px;
@@ -1364,7 +1374,6 @@ input:checked + .slider:before { transform: translateX(20px); }
     }
 }
 
-/* Очень маленькие экраны */
 @media (max-width: 350px) {
     .control-btn {
         width: 28px;
