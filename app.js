@@ -1,4 +1,4 @@
-// ===== Confidential Meetings App v12 FINAL =====
+// ===== Confidential Meetings App v13 FINAL =====
 
 const AppState = {
     userName: '',
@@ -61,7 +61,7 @@ function dismissAlert() {
 
 // ===== Инициализация =====
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 Confidential Meetings v12 FINAL');
+    console.log('🚀 Confidential Meetings v13');
     setupMainScreen();
     setupCreateScreen();
     setupJoinScreen();
@@ -138,11 +138,9 @@ function startSpeechDetection(stream, cardSelector) {
 function showNotification(message, type = 'info') {
     const statusBar = $('#meetingStatus');
     if (statusBar) {
-        const originalText = statusBar.textContent;
         statusBar.textContent = message;
         statusBar.style.color = type === 'warning' ? 'var(--warning)' : type === 'danger' ? 'var(--danger)' : 'var(--success)';
         setTimeout(() => {
-            statusBar.textContent = originalText;
             statusBar.style.color = '';
         }, 3000);
     }
@@ -276,10 +274,16 @@ function updateHostUI() {
     
     if (AppState.isHost) {
         // Организатор видит кнопку "Поделиться"
-        if (shareBtn) shareBtn.style.display = 'flex';
+        if (shareBtn) {
+            shareBtn.style.display = 'flex';
+            shareBtn.style.visibility = 'visible';
+        }
     } else {
         // Участник НЕ видит кнопку "Поделиться"
-        if (shareBtn) shareBtn.style.display = 'none';
+        if (shareBtn) {
+            shareBtn.style.display = 'none';
+            shareBtn.style.visibility = 'hidden';
+        }
         // Закрываем панель если была открыта
         if (sharePanel) sharePanel.classList.add('hidden');
     }
@@ -345,7 +349,6 @@ async function captureMedia() {
         $('#localAvatarWrapper')?.classList.add('hidden');
         updateMicButton();
         
-        // Запускаем детектор речи
         if (AppState.speechInterval) clearInterval(AppState.speechInterval);
         AppState.speechInterval = startSpeechDetection(AppState.localStream, '#localCard');
         
@@ -365,7 +368,10 @@ async function toggleScreenShare() {
     }
     
     try {
-        AppState.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+        AppState.screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+            video: { cursor: 'always' },
+            audio: false 
+        });
         
         // Слушаем завершение демонстрации
         AppState.screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
@@ -377,29 +383,17 @@ async function toggleScreenShare() {
         $('#screenShareBtn')?.classList.add('active');
         AppState.screenSharing = true;
         
-        // Отправляем экран ВСЕМ пирам
         const screenTrack = AppState.screenStream.getVideoTracks()[0];
         
-        AppState.peers.forEach((peer, peerId) => {
+        // Отправляем экран ВСЕМ существующим пирам
+        for (const [peerId, peer] of AppState.peers) {
             try {
-                // Заменяем или добавляем трек экрана
-                const senders = peer.getSenders();
-                const existingVideoSender = senders.find(s => 
-                    s.track && s.track.kind === 'video' && 
-                    !(s.track.label || '').includes('screen') &&
-                    !(s.track.label || '').includes('display')
-                );
-                
-                if (existingVideoSender) {
-                    // Создаём новый поток с экраном и заменяем
-                    peer.addTrack(screenTrack, AppState.localStream);
-                } else {
-                    peer.addTrack(screenTrack, AppState.localStream);
-                }
+                console.log('Отправка экрана пиру:', peerId);
+                peer.addTrack(screenTrack, AppState.localStream);
             } catch (e) {
                 console.error('Ошибка отправки экрана пиру:', peerId, e);
             }
-        });
+        }
         
         showNotification('📺 Демонстрация экрана включена', 'info');
         updateStatus('📺 Демонстрация экрана запущена');
@@ -422,6 +416,23 @@ function stopScreenShare() {
     $('#screenShareBtn')?.classList.remove('active');
     AppState.screenSharing = false;
     
+    // Удаляем треки экрана у всех пиров
+    for (const [peerId, peer] of AppState.peers) {
+        try {
+            const senders = peer.getSenders();
+            for (const sender of senders) {
+                if (sender.track && sender.track.kind === 'video') {
+                    const label = (sender.track.label || '').toLowerCase();
+                    if (label.includes('screen') || label.includes('display') || label.includes('window')) {
+                        peer.removeTrack(sender);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Ошибка удаления трека:', peerId, e);
+        }
+    }
+    
     showNotification('📺 Демонстрация экрана выключена', 'warning');
     updateStatus('Демонстрация экрана остановлена');
 }
@@ -432,7 +443,7 @@ function initTrystero() {
     
     console.log('Инициализация Trystero с комнатой:', AppState.roomId);
     
-    AppState.room = window.trysteroJoinRoom({ appId: 'conf-meet-v12-' + AppState.roomId }, 'meeting');
+    AppState.room = window.trysteroJoinRoom({ appId: 'conf-meet-v13-' + AppState.roomId }, 'meeting');
     
     const [sendSignal, getSignal] = AppState.room.makeAction('signal');
     const [sendChat, getChat] = AppState.room.makeAction('chat');
@@ -464,6 +475,22 @@ function initTrystero() {
             emoji: AppState.userEmoji,
             role: AppState.isHost ? 'Организатор' : 'Участник'
         });
+        
+        // Если есть активная демонстрация - отправляем её новому пиру
+        if (AppState.screenSharing && AppState.screenStream) {
+            setTimeout(() => {
+                const peer = AppState.peers.get(peerId);
+                if (peer && AppState.screenStream) {
+                    const screenTrack = AppState.screenStream.getVideoTracks()[0];
+                    try {
+                        peer.addTrack(screenTrack, AppState.localStream);
+                        console.log('Экран отправлен новому пиру:', peerId);
+                    } catch (e) {
+                        console.error('Ошибка отправки экрана новому пиру:', e);
+                    }
+                }
+            }, 2000);
+        }
         
         // Если мы гость - инициируем WebRTC соединение
         if (!AppState.isHost) {
@@ -523,25 +550,32 @@ function createPeer(peerId, initiator) {
         const videoTracks = stream.getVideoTracks();
         const audioTracks = stream.getAudioTracks();
         
-        if (videoTracks.length > 0) {
-            const label = (videoTracks[0].label || '').toLowerCase();
-            console.log('Лейбл видеодорожки:', label);
+        // Обрабатываем ВСЕ видеодорожки
+        for (const track of videoTracks) {
+            const label = (track.label || '').toLowerCase();
+            console.log('Видеодорожка:', label);
             
             if (label.includes('screen') || label.includes('display') || label.includes('window')) {
-                // Это демонстрация экрана от собеседника
+                // Это демонстрация экрана
                 const screenShareVideo = $('#screenShareVideo');
                 if (screenShareVideo) screenShareVideo.srcObject = stream;
                 $('#screenShareCard')?.classList.remove('hidden');
                 showNotification('📺 Собеседник демонстрирует экран', 'info');
-            } else {
-                // Это видео с камеры
-                const remoteVideo = $('#remoteVideo');
-                if (remoteVideo) { remoteVideo.srcObject = stream; remoteVideo.parentElement?.classList.remove('hidden'); }
-                $('#remoteAvatarWrapper')?.classList.add('hidden');
+                return; // Выходим после обработки экрана
             }
         }
         
-        // Запускаем детектор речи для удалённого потока
+        // Если это не экран - значит видео с камеры
+        if (videoTracks.length > 0 && !videoTracks[0].label.toLowerCase().includes('screen')) {
+            const remoteVideo = $('#remoteVideo');
+            if (remoteVideo) { 
+                remoteVideo.srcObject = stream; 
+                remoteVideo.parentElement?.classList.remove('hidden'); 
+            }
+            $('#remoteAvatarWrapper')?.classList.add('hidden');
+        }
+        
+        // Запускаем детектор речи
         if (audioTracks.length > 0) {
             if (AppState.remoteSpeechInterval) clearInterval(AppState.remoteSpeechInterval);
             AppState.remoteSpeechInterval = startSpeechDetection(stream, '#remoteCard');
@@ -581,13 +615,7 @@ function toggleMic() {
             audioTrack.enabled = !audioTrack.enabled;
             AppState.micEnabled = audioTrack.enabled;
             updateMicButton();
-            
-            // Уведомление
-            if (AppState.micEnabled) {
-                showNotification('🎤 Микрофон включен', 'info');
-            } else {
-                showNotification('🔇 Микрофон выключен', 'warning');
-            }
+            showNotification(AppState.micEnabled ? '🎤 Микрофон включен' : '🔇 Микрофон выключен', AppState.micEnabled ? 'info' : 'warning');
         }
     }
 }
@@ -778,9 +806,12 @@ function checkUrlForRoom() {
 
 // ===== UI =====
 function updateLocalDisplay() {
-    // Только одна роль в подписи
     const role = AppState.isHost ? 'Организатор' : 'Участник';
-    const localName = $('#localName'); if (localName) localName.textContent = (AppState.userName || 'Вы') + ' • ' + role;
+    const localName = $('#localName');
+    // Проверяем, нет ли уже роли в имени
+    const displayName = (AppState.userName || 'Вы');
+    if (localName) localName.textContent = displayName + ' • ' + role;
+    
     const localAvatarEmoji = $('#localAvatarEmoji'); if (localAvatarEmoji) localAvatarEmoji.textContent = AppState.userEmoji;
     
     if (AppState.cameraEnabled) {
@@ -805,7 +836,6 @@ function updateRemoteUser(info) {
     const hasVideo = info.hasVideo !== undefined ? info.hasVideo : true;
     const emoji = info.emoji || '👤';
     
-    // Показываем роль только один раз
     const remoteName = $('#remoteName');
     if (remoteName) remoteName.textContent = name + (role ? ' • ' + role : '');
     
