@@ -2,17 +2,16 @@
 // Архитектура: Хост создаёт отдельные peer для каждого гостя
 // Гость подключается только к хосту
 // Хост ретранслирует видео между всеми участниками
+// Демонстрация экрана: отдельный трек через addTrack/removeTrack
 
 const AppState = {
     userName: '', userEmoji: '😊', cameraEnabled: true, micEnabled: true,
-    isHost: false, roomId: null,
-    localStream: null, peers: new Map(), // peerId -> { peer, userName, emoji, videoStream }
+    screenSharing: false, isHost: false, roomId: null,
+    localStream: null, screenStream: null, peers: new Map(), // peerId -> { peer, userName, emoji, videoStream }
     room: null,
     sendSignal: null, sendChatMsg: null, sendUserInfo: null,
     scannerStream: null, isConnected: false,
-    timerInterval: null, startTime: null, previewStream: null,
-    // Специфичные для хоста
-    guestStreams: new Map() // peerId -> MediaStream (для ретрансляции)
+    timerInterval: null, startTime: null, previewStream: null
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -27,7 +26,7 @@ function showNotification(msg) {
 
 // ===== Инициализация =====
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 TELEMOST STYLE');
+    console.log('🚀 TELEMOST STYLE + SCREEN SHARE');
     setupMain(); setupCreate(); setupJoin(); setupInvite(); setupMeeting();
     setTimeout(() => { if (!checkUrl()) $('#mainScreen').classList.remove('hidden'); }, 500);
 });
@@ -134,11 +133,15 @@ function setupInvite() {
     $('#changeInviteAvatar').onclick = () => { const e = getEmoji(); $('#inviteAvatarEmoji').textContent = e; AppState.userEmoji = e; };
 }
 
-function updateHostUI() { const btn = $('#shareBtn'); if (btn) btn.style.display = AppState.isHost ? 'flex' : 'none'; }
+function updateHostUI() { 
+    const btn = $('#shareBtn'); 
+    if (btn) btn.style.display = AppState.isHost ? 'flex' : 'none'; 
+}
 
 function setupMeeting() {
     $('#micBtn').onclick = toggleMic;
     $('#cameraBtn').onclick = toggleCamera;
+    $('#screenShareBtn').onclick = toggleScreenShare;
     $('#shareBtn').onclick = () => { if (!AppState.isHost) return; $('#sharePanel').classList.toggle('hidden'); $('#chatPanel').classList.add('hidden'); };
     $('#chatBtn').onclick = () => { $('#chatPanel').classList.toggle('hidden'); $('#sharePanel').classList.add('hidden'); };
     $('#hangupBtn').onclick = hangUp;
@@ -167,6 +170,83 @@ async function captureMedia() {
         $('#localVideo').parentElement.classList.add('hidden'); 
         $('#localAvatarWrapper').classList.remove('hidden'); 
     }
+}
+
+// ===== ДЕМОНСТРАЦИЯ ЭКРАНА (как отдельный трек) =====
+async function toggleScreenShare() {
+    if (AppState.screenSharing) {
+        await stopScreenShare();
+        return;
+    }
+    
+    try {
+        // Захватываем экран
+        AppState.screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { cursor: 'always' },
+            audio: false
+        });
+        
+        // Слушаем завершение демонстрации
+        AppState.screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
+        
+        // Показываем локально
+        const ssv = $('#screenShareVideo');
+        if (ssv) ssv.srcObject = AppState.screenStream;
+        $('#screenShareCard')?.classList.remove('hidden');
+        $('#screenShareBtn')?.classList.add('active');
+        AppState.screenSharing = true;
+        
+        // Добавляем трек экрана во ВСЕ существующие peer-соединения
+        const screenTrack = AppState.screenStream.getVideoTracks()[0];
+        
+        for (const [peerId, peerData] of AppState.peers) {
+            if (peerData && peerData.peer) {
+                try {
+                    // Добавляем трек экрана как дополнительный
+                    peerData.peer.addTrack(screenTrack, AppState.localStream);
+                    console.log('📺 Экран добавлен пиру:', peerId);
+                } catch (e) {
+                    console.error('Ошибка добавления трека экрана:', peerId, e);
+                }
+            }
+        }
+        
+        showNotification('📺 Демонстрация экрана включена');
+        
+    } catch (error) {
+        console.error('Ошибка демонстрации:', error);
+        alert('Не удалось начать демонстрацию экрана');
+    }
+}
+
+async function stopScreenShare() {
+    // Удаляем трек экрана из всех peer-соединений
+    if (AppState.screenStream) {
+        const screenTrack = AppState.screenStream.getVideoTracks()[0];
+        
+        for (const [peerId, peerData] of AppState.peers) {
+            if (peerData && peerData.peer) {
+                try {
+                    peerData.peer.removeTrack(screenTrack);
+                    console.log('📺 Трек экрана удалён у пира:', peerId);
+                } catch (e) {
+                    console.error('Ошибка удаления трека:', peerId, e);
+                }
+            }
+        }
+        
+        AppState.screenStream.getTracks().forEach(t => t.stop());
+        AppState.screenStream = null;
+    }
+    
+    // Скрываем локально
+    const ssv = $('#screenShareVideo');
+    if (ssv) ssv.srcObject = null;
+    $('#screenShareCard')?.classList.add('hidden');
+    $('#screenShareBtn')?.classList.remove('active');
+    AppState.screenSharing = false;
+    
+    showNotification('📺 Демонстрация экрана выключена');
 }
 
 // ===== Trystero - КАК В ТЕЛЕМОСТЕ =====
@@ -271,17 +351,35 @@ function createPeer(peerId, initiator) {
     peer.on('stream', (stream) => {
         console.log('📥 Поток от:', peerId, 'Дорожек:', stream.getTracks().length);
         
-        // Сохраняем поток в данных пира
-        const peerData = AppState.peers.get(peerId);
-        if (peerData) {
-            peerData.videoStream = stream;
+        // Проверяем, это экран или камера
+        const videoTracks = stream.getVideoTracks();
+        let isScreen = false;
+        
+        for (const track of videoTracks) {
+            const label = (track.label || '').toLowerCase();
+            if (label.includes('screen') || label.includes('display') || label.includes('window')) {
+                isScreen = true;
+                console.log('📺 Это демонстрация экрана от:', peerId);
+                
+                // Показываем экран в специальной карточке
+                const ssv = $('#screenShareVideo');
+                if (ssv) ssv.srcObject = stream;
+                $('#screenShareCard')?.classList.remove('hidden');
+                showNotification('📺 Участник демонстрирует экран');
+                break;
+            }
         }
         
-        // Показываем видео участника
-        addRemoteVideo(peerId, stream);
+        if (!isScreen) {
+            // Это обычное видео с камеры
+            const peerData = AppState.peers.get(peerId);
+            if (peerData) {
+                peerData.videoStream = stream;
+            }
+            addRemoteVideo(peerId, stream);
+        }
         
         AppState.isConnected = true;
-        showNotification('✅ Участник подключился');
         updateCount();
     });
     
@@ -523,6 +621,13 @@ function startTimer() {
 }
 
 function hangUp() { 
+    // Останавливаем демонстрацию экрана
+    if (AppState.screenStream) {
+        AppState.screenStream.getTracks().forEach(t => t.stop());
+        AppState.screenStream = null;
+    }
+    AppState.screenSharing = false;
+    
     AppState.peers.forEach(pData => { try { pData.peer.destroy(); } catch(e) {} }); 
     AppState.peers.clear(); 
     if (AppState.room) { try { AppState.room.leave(); } catch(e) {} AppState.room = null; } 
