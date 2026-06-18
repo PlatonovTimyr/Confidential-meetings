@@ -1,11 +1,10 @@
-// ===== Confidential Meetings - BUGOUT VERSION =====
+// ===== Confidential Meetings - BUGOUT =====
 
 const AppState = {
     userName: '', userEmoji: '😊', cameraEnabled: true, micEnabled: true,
     screenSharing: false, isHost: false, roomId: null,
     localStream: null, screenStream: null,
-    peers: new Map(),
-    bugout: null,
+    peers: new Map(), bugout: null,
     scannerStream: null, timerInterval: null, startTime: null, previewStream: null
 };
 
@@ -20,7 +19,7 @@ function showNotification(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 BUGOUT VERSION');
+    console.log('🚀 BUGOUT');
     setupMain(); setupCreate(); setupJoin(); setupInvite(); setupMeeting();
     setTimeout(() => { if (!checkUrl()) $('#mainScreen').classList.remove('hidden'); }, 500);
 });
@@ -143,23 +142,31 @@ function stopScreenShare() {
     showNotification('📺 Демонстрация экрана выключена');
 }
 
-// ===== BUGOUT (вместо Trystero) =====
+// ===== BUGOUT =====
 function initBugout() {
     console.log('🔗 Bugout. Комната:', AppState.roomId);
     AppState.bugout = new Bugout(AppState.roomId);
     
+    // Получаем сообщения от других участников
     AppState.bugout.on('message', (address, data) => {
         try {
             const msg = JSON.parse(data);
+            console.log('📨 Сообщение от:', address, msg.type);
+            
             if (msg.type === 'signal') {
-                handleSignal(address, msg.data);
+                let peer = AppState.peers.get(address);
+                if (!peer) {
+                    // Создаём новый peer для этого адреса
+                    peer = createPeer(address, false);
+                }
+                try { peer.signal(msg.data); } catch(e) { console.error('Signal error:', e); }
             } else if (msg.type === 'chat') {
                 showChatMsg(msg.sender, msg.text, false);
             }
-        } catch(e) {}
+        } catch(e) { console.error('Message error:', e); }
     });
     
-    // Если мы гость - инициируем WebRTC
+    // Гость инициирует WebRTC
     if (!AppState.isHost) {
         setTimeout(() => {
             console.log('📞 Гость инициирует WebRTC');
@@ -168,17 +175,9 @@ function initBugout() {
     }
 }
 
-function handleSignal(address, signalData) {
-    let peer = AppState.peers.get(address);
-    if (!peer) {
-        // Хост создаёт peer (не инициатор)
-        peer = createPeer(address, false);
-    }
-    try { peer.signal(signalData); } catch(e) { console.error('Signal error:', e); }
-}
-
 function createPeer(peerId, initiator) {
     console.log('🔧 Peer:', peerId, 'Инициатор:', initiator);
+    
     const streams = [];
     if (AppState.localStream) streams.push(AppState.localStream);
     if (AppState.screenStream) streams.push(AppState.screenStream);
@@ -190,18 +189,22 @@ function createPeer(peerId, initiator) {
         config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
     });
     
+    // Отправляем сигналы через Bugout
     peer.on('signal', (data) => {
         if (AppState.bugout) {
             AppState.bugout.send(JSON.stringify({ type: 'signal', data: data }));
         }
     });
     
+    // Получаем видео/аудио поток
     peer.on('stream', (stream) => {
         console.log('📥 Поток от:', peerId);
         const vt = stream.getVideoTracks();
         let isScreen = false;
+        
         for (const track of vt) {
-            if ((track.label||'').toLowerCase().includes('screen')) {
+            const label = (track.label || '').toLowerCase();
+            if (label.includes('screen') || label.includes('display')) {
                 isScreen = true;
                 const ssv = $('#screenShareVideo'); if (ssv) ssv.srcObject = stream;
                 $('#screenShareCard').classList.remove('hidden');
@@ -209,10 +212,12 @@ function createPeer(peerId, initiator) {
                 break;
             }
         }
+        
         if (!isScreen && vt.length > 0) {
             const rv = $('#remoteVideo'); if (rv) { rv.srcObject = stream; rv.parentElement.classList.remove('hidden'); }
             $('#remoteAvatarWrapper').classList.add('hidden');
         }
+        
         $('#remoteCard').classList.remove('hidden');
         $('#emptyState').classList.add('hidden');
         showNotification('✅ Соединение установлено');
