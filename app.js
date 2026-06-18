@@ -175,47 +175,79 @@ function stopScreenShare() {
 // ===== Trystero =====
 function initTrystero() {
     if(!window.trysteroJoinRoom){showNotification('Ошибка модуля связи');return;}
-    console.log('🔗 Комната:',AppState.roomId);
+    console.log('🔗 Комната:',AppState.roomId,'Роль:',AppState.isHost?'ХОСТ':'ГОСТЬ');
+    
     AppState.room=window.trysteroJoinRoom({appId:'conf-meet-'+AppState.roomId},'meeting');
     const [sendSignal,getSignal]=AppState.room.makeAction('signal');
     const [sendChat,getChat]=AppState.room.makeAction('chat');
     const [sendUserInfo,getUserInfo]=AppState.room.makeAction('userInfo');
     AppState.sendSignal=sendSignal; AppState.sendChatMsg=sendChat; AppState.sendUserInfo=sendUserInfo;
     
+    // Получение сигналов
     getSignal((data,peerId)=>{
         console.log('📡 Сигнал от:',peerId);
         let peer=AppState.peers.get(peerId);
-        if(!peer){peer=createPeer(peerId,!AppState.isHost);}
-        try{peer.signal(data);}catch(e){console.error('Signal error:',e);}
+        if(!peer){
+            // ГОСТЬ: если мы не хост, мы уже создали peer в onPeerJoin
+            // ХОСТ: создаём peer когда получаем сигнал от гостя
+            if(AppState.isHost){
+                peer=createPeer(peerId,false); // ХОСТ НЕ инициирует
+            }
+        }
+        if(peer){
+            try{peer.signal(data);}catch(e){console.error('Signal error:',e);}
+        }
     });
     
     getChat((data)=>{if(data&&data.text)showChatMsg(data.sender||'Собеседник',data.text,false);});
     getUserInfo((info)=>{updateRemote(info);});
     
     AppState.room.onPeerJoin((peerId)=>{
-        console.log('🟢',peerId);
+        console.log('🟢 Новый участник:',peerId);
         setTimeout(()=>sendMyInfo(),500);
-        if(!AppState.isHost)createPeer(peerId,true);
+        
+        // ВАЖНО: ГОСТЬ всегда инициирует WebRTC
+        if(!AppState.isHost){
+            console.log('📞 Гость инициирует WebRTC');
+            createPeer(peerId,true); // ГОСТЬ инициирует
+        }
+        // ХОСТ ждёт сигнала от гостя
     });
     
     AppState.room.onPeerLeave((peerId)=>{
         console.log('🔴',peerId);
         const peer=AppState.peers.get(peerId);if(peer)peer.destroy();
         AppState.peers.delete(peerId);
-        if(AppState.peers.size===0){$('#remoteVideo').srcObject=null;$('#remoteCard').classList.add('hidden');$('#emptyState').classList.remove('hidden');AppState.isConnected=false;showNotification('Собеседник отключился');}
+        if(AppState.peers.size===0){
+            $('#remoteVideo').srcObject=null;
+            $('#remoteCard').classList.add('hidden');
+            $('#screenShareCard').classList.add('hidden');
+            $('#emptyState').classList.remove('hidden');
+            AppState.isConnected=false;
+            showNotification('Собеседник отключился');
+        }
         updateCount();
     });
 }
 
 function createPeer(peerId, initiator) {
-    console.log('🔧 Peer:',initiator);
+    console.log('🔧 Peer. ID:',peerId,'Инициатор:',initiator,'Хост:',AppState.isHost);
+    
     const streams=[];
     if(AppState.localStream)streams.push(AppState.localStream);
     if(AppState.screenStream)streams.push(AppState.screenStream);
     
-    const peer=new SimplePeer({initiator,streams,trickle:true,config:{iceServers:[{urls:'stun:stun.l.google.com:19302'}]}});
+    const peer=new SimplePeer({
+        initiator:initiator,
+        streams:streams,
+        trickle:true,
+        config:{iceServers:[{urls:'stun:stun.l.google.com:19302'}]}
+    });
     
-    peer.on('signal',(data)=>{if(AppState.sendSignal)AppState.sendSignal(data);});
+    peer.on('signal',(data)=>{
+        console.log('📤 Сигнал');
+        if(AppState.sendSignal)AppState.sendSignal(data);
+    });
     
     peer.on('stream',(stream)=>{
         console.log('📥 Поток, дорожек:',stream.getTracks().length);
@@ -246,8 +278,19 @@ function createPeer(peerId, initiator) {
     });
     
     peer.on('connect',()=>console.log('🔗 OK'));
-    peer.on('close',()=>{AppState.peers.delete(peerId);if(AppState.peers.size===0){$('#remoteVideo').srcObject=null;$('#remoteCard').classList.add('hidden');$('#screenShareCard').classList.add('hidden');$('#emptyState').classList.remove('hidden');AppState.isConnected=false;}updateCount();});
-    peer.on('error',(e)=>console.error(e));
+    peer.on('close',()=>{
+        console.log('❌ Peer закрыт:',peerId);
+        AppState.peers.delete(peerId);
+        if(AppState.peers.size===0){
+            $('#remoteVideo').srcObject=null;
+            $('#remoteCard').classList.add('hidden');
+            $('#screenShareCard').classList.add('hidden');
+            $('#emptyState').classList.remove('hidden');
+            AppState.isConnected=false;
+        }
+        updateCount();
+    });
+    peer.on('error',(e)=>console.error('Peer error:',e));
     
     AppState.peers.set(peerId,peer);
     return peer;
