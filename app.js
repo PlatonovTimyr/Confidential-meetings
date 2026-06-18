@@ -1,28 +1,55 @@
-// ===== Confidential Meetings - MULTI PEER + SCREEN =====
+// ===== Confidential Meetings App v16 =====
 
 const AppState = {
-    userName: '', userEmoji: '😊', cameraEnabled: true, micEnabled: true,
-    screenSharing: false, isHost: false, roomId: null, encryptionKeyStr: '',
-    localStream: null, screenStream: null, peers: new Map(), room: null,
-    sendSignal: null, sendChatMsg: null, sendUserInfo: null,
-    scannerStream: null, isConnected: false,
-    timerInterval: null, startTime: null, previewStream: null,
-    speechInterval: null, remoteSpeechInterval: null
+    userName: '',
+    userEmoji: '😊',
+    cameraEnabled: true,
+    micEnabled: true,
+    screenSharing: false,
+    isHost: false,
+    roomId: null,
+    encryptionKeyStr: '',
+    localStream: null,
+    screenStream: null,
+    peers: new Map(),
+    room: null,
+    sendSignal: null,
+    sendChatMsg: null,
+    sendUserInfo: null,
+    scannerStream: null,
+    isConnected: false,
+    timerInterval: null,
+    startTime: null,
+    previewStream: null,
+    speechInterval: null,
+    remoteSpeechInterval: null
 };
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 const EMOJIS = ['😊', '😎', '🤗', '😇', '🙂', '😄', '🥳', '😌', '🤩', '😁', '😺', '🦊', '🐱', '🐼', '🐨', '🦁', '🐯', '🐸', '🦄', '🐙'];
 
+// ===== Уведомления =====
 function showNotification(message) {
-    const statusEl = $('#meetingStatus'); if (!statusEl) return;
-    statusEl.textContent = message; statusEl.style.color = '#fdcb6e';
-    setTimeout(() => { statusEl.style.color = ''; }, 3000);
+    const statusEl = $('#meetingStatus');
+    if (!statusEl) return;
+    statusEl.textContent = message;
+    statusEl.style.color = '#fdcb6e';
+    statusEl.style.fontWeight = 'bold';
+    setTimeout(() => {
+        statusEl.style.color = '';
+        statusEl.style.fontWeight = '';
+    }, 3000);
 }
 
+// ===== Инициализация =====
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 MULTI PEER + SCREEN');
-    setupMainScreen(); setupCreateScreen(); setupJoinScreen(); setupInviteScreen(); setupMeetingScreen();
+    console.log('🚀 v16');
+    setupMainScreen();
+    setupCreateScreen();
+    setupJoinScreen();
+    setupInviteScreen();
+    setupMeetingScreen();
     setTimeout(() => { if (!checkUrlForRoom()) { const ms = $('#mainScreen'); if (ms) ms.classList.remove('hidden'); } }, 500);
 });
 
@@ -30,8 +57,17 @@ function getRandomEmoji() { return EMOJIS[Math.floor(Math.random() * EMOJIS.leng
 
 async function startCameraPreview(videoElement, avatarEmojiElement) {
     if (!videoElement) return null;
-    try { stopCameraPreview(); const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false }); AppState.previewStream = stream; videoElement.srcObject = stream; videoElement.classList.remove('hidden'); if (avatarEmojiElement) avatarEmojiElement.classList.add('hidden'); return stream; } catch (error) { if (videoElement) videoElement.classList.add('hidden'); if (avatarEmojiElement) avatarEmojiElement.classList.remove('hidden'); return null; }
+    try {
+        stopCameraPreview();
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+        AppState.previewStream = stream;
+        videoElement.srcObject = stream;
+        videoElement.classList.remove('hidden');
+        if (avatarEmojiElement) avatarEmojiElement.classList.add('hidden');
+        return stream;
+    } catch (error) { if (videoElement) videoElement.classList.add('hidden'); if (avatarEmojiElement) avatarEmojiElement.classList.remove('hidden'); return null; }
 }
+
 function stopCameraPreview() { if (AppState.previewStream) { AppState.previewStream.getTracks().forEach(t => t.stop()); AppState.previewStream = null; } }
 
 function switchScreen(screenId) {
@@ -41,7 +77,12 @@ function switchScreen(screenId) {
 
 function startSpeechDetection(stream, cardSelector) {
     if (!stream) return null;
-    try { const ac = new (window.AudioContext || window.webkitAudioContext)(); const analyser = ac.createAnalyser(); ac.createMediaStreamSource(stream).connect(analyser); analyser.fftSize = 256; const dataArray = new Uint8Array(analyser.frequencyBinCount); return setInterval(() => { analyser.getByteFrequencyData(dataArray); const avg = dataArray.reduce((a,b)=>a+b,0)/dataArray.length; const card = $(cardSelector); if (card) { if (avg > 30) card.classList.add('speaking'); else card.classList.remove('speaking'); } }, 200); } catch (e) { return null; }
+    try {
+        const ac = new (window.AudioContext || window.webkitAudioContext)();
+        const analyser = ac.createAnalyser(); ac.createMediaStreamSource(stream).connect(analyser);
+        analyser.fftSize = 256; const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        return setInterval(() => { analyser.getByteFrequencyData(dataArray); const avg = dataArray.reduce((a,b)=>a+b,0)/dataArray.length; const card = $(cardSelector); if (card) { if (avg > 30) card.classList.add('speaking'); else card.classList.remove('speaking'); } }, 200);
+    } catch (e) { return null; }
 }
 
 function setupMainScreen() {
@@ -54,7 +95,8 @@ function setupCreateScreen() {
     $('#createMeetingBtn')?.addEventListener('click', async () => {
         AppState.userName = $('#createUserName')?.value.trim() || 'Организатор'; AppState.isHost = true; AppState.cameraEnabled = true; AppState.micEnabled = true;
         try {
-            stopCameraPreview(); AppState.roomId = generateRoomId();
+            stopCameraPreview();
+            AppState.roomId = generateRoomId();
             await captureMedia();
             const wantCamera = $('#createCameraToggle')?.checked ?? true; const wantMic = $('#createMicToggle')?.checked ?? true;
             if (!wantCamera && AppState.localStream) { const vt = AppState.localStream.getVideoTracks()[0]; if (vt) { vt.enabled = false; AppState.cameraEnabled = false; } }
@@ -105,100 +147,94 @@ function setupMeetingScreen() {
 function sendMyInfo() { if (!AppState.sendUserInfo) return; AppState.sendUserInfo({ name: AppState.userName, hasVideo: AppState.cameraEnabled, emoji: AppState.userEmoji, role: AppState.isHost ? 'Организатор' : 'Участник' }); }
 
 async function captureMedia() {
-    try { AppState.localStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true }); const lv = $('#localVideo'); if (lv) { lv.srcObject = AppState.localStream; lv.parentElement?.classList.remove('hidden'); } $('#localAvatarWrapper')?.classList.add('hidden'); updateMicButton(); updateCameraButton(); if (AppState.speechInterval) clearInterval(AppState.speechInterval); AppState.speechInterval = startSpeechDetection(AppState.localStream, '#localCard'); } catch (error) { AppState.cameraEnabled = false; $('#localVideo')?.parentElement?.classList.add('hidden'); $('#localAvatarWrapper')?.classList.remove('hidden'); }
+    try {
+        AppState.localStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true });
+        const lv = $('#localVideo'); if (lv) { lv.srcObject = AppState.localStream; lv.parentElement?.classList.remove('hidden'); }
+        $('#localAvatarWrapper')?.classList.add('hidden'); updateMicButton(); updateCameraButton();
+        if (AppState.speechInterval) clearInterval(AppState.speechInterval);
+        AppState.speechInterval = startSpeechDetection(AppState.localStream, '#localCard');
+    } catch (error) { console.error('Ошибка медиа:', error); AppState.cameraEnabled = false; $('#localVideo')?.parentElement?.classList.add('hidden'); $('#localAvatarWrapper')?.classList.remove('hidden'); }
 }
 
-// ===== ДЕМОНСТРАЦИЯ ЭКРАНА (как в Телемосте) =====
+// ===== ДЕМОНСТРАЦИЯ ЭКРАНА — ПЕРЕСОЗДАНИЕ PEER =====
 async function toggleScreenShare() {
-    if (AppState.screenSharing) { stopScreenShare(); return; }
+    if (AppState.screenSharing) {
+        await stopScreenShareAndRestore();
+        return;
+    }
     
     try {
+        // Захватываем экран
         AppState.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: 'always' }, audio: false });
-        AppState.screenStream.getVideoTracks()[0].onended = () => stopScreenShare();
+        AppState.screenStream.getVideoTracks()[0].onended = () => stopScreenShareAndRestore();
         
+        // Показываем локально
         const ssv = $('#screenShareVideo'); if (ssv) ssv.srcObject = AppState.screenStream;
         $('#screenShareCard')?.classList.remove('hidden');
         $('#screenShareBtn')?.classList.add('active');
         AppState.screenSharing = true;
         
-        const screenTrack = AppState.screenStream.getVideoTracks()[0];
-        
-        // Добавляем трек экрана всем пирам
-        for (const [peerId, peerData] of AppState.peers) {
-            const peer = peerData.peer || peerData; // совместимость с обоими форматами
-            try { if (peer && peer.addTrack) peer.addTrack(screenTrack, AppState.localStream); console.log('📺 Экран отправлен:', peerId); } catch(e) { console.error('Ошибка отправки экрана:', peerId, e); }
-        }
+        // Пересоздаём все peer-соединения с новым потоком
+        await recreateAllPeers();
         
         showNotification('📺 Демонстрация экрана включена');
-    } catch (error) { console.error('Ошибка демонстрации:', error); }
+    } catch (error) {
+        console.error('Ошибка демонстрации:', error);
+        alert('Не удалось начать демонстрацию экрана');
+    }
 }
 
-function stopScreenShare() {
-    if (AppState.screenStream) { AppState.screenStream.getTracks().forEach(t => t.stop()); AppState.screenStream = null; }
+async function stopScreenShareAndRestore() {
+    if (AppState.screenStream) {
+        AppState.screenStream.getTracks().forEach(t => t.stop());
+        AppState.screenStream = null;
+    }
+    
     const ssv = $('#screenShareVideo'); if (ssv) ssv.srcObject = null;
     $('#screenShareCard')?.classList.add('hidden');
     $('#screenShareBtn')?.classList.remove('active');
     AppState.screenSharing = false;
+    
+    // Пересоздаём peer-соединения без экрана
+    await recreateAllPeers();
+    
     showNotification('📺 Демонстрация экрана выключена');
 }
 
-// ===== Trystero - MULTI PEER =====
-function initTrystero() {
-    if (!window.trysteroJoinRoom) { updateStatus('Ошибка модуля связи'); return; }
-    console.log('🔗 Trystero. Комната:', AppState.roomId);
+async function recreateAllPeers() {
+    const peerIds = Array.from(AppState.peers.keys());
     
-    AppState.room = window.trysteroJoinRoom({ appId: 'conf-meet-multi-' + AppState.roomId }, 'meeting');
-    const [sendSignal, getSignal] = AppState.room.makeAction('signal');
-    const [sendChat, getChat] = AppState.room.makeAction('chat');
-    const [sendUserInfo, getUserInfo] = AppState.room.makeAction('userInfo');
-    AppState.sendSignal = sendSignal; AppState.sendChatMsg = sendChat; AppState.sendUserInfo = sendUserInfo;
-    
-    getSignal((data, peerId) => {
-        console.log('📡 Сигнал от:', peerId);
-        let peerData = AppState.peers.get(peerId);
-        if (!peerData) {
-            const peer = createPeer(peerId, AppState.isHost ? false : true);
-            AppState.peers.set(peerId, { peer, userName: '', emoji: '👤', videoStream: null });
-            peerData = AppState.peers.get(peerId);
+    for (const peerId of peerIds) {
+        const oldPeer = AppState.peers.get(peerId);
+        if (oldPeer) {
+            oldPeer.destroy();
+            AppState.peers.delete(peerId);
         }
-        try { const p = peerData.peer || peerData; p.signal(data); } catch(e) { console.error('Signal error:', e); }
-    });
-    
-    getChat((data) => { if (data && data.text) displayChatMessage(data.sender || 'Собеседник', data.text, false); });
-    getUserInfo((info) => { updateRemoteUser(info); });
-    
-    AppState.room.onPeerJoin((peerId) => {
-        console.log('🟢 Новый участник:', peerId);
-        setTimeout(() => sendMyInfo(), 500);
-        if (!AppState.isHost) {
-            console.log('📞 Гость инициирует WebRTC');
-            const peer = createPeer(peerId, true);
-            AppState.peers.set(peerId, { peer, userName: '', emoji: '👤', videoStream: null });
-        }
-    });
-    
-    AppState.room.onPeerLeave((peerId) => {
-        console.log('🔴 Участник отключился:', peerId);
-        const peerData = AppState.peers.get(peerId);
-        if (peerData) { const p = peerData.peer || peerData; try { p.destroy(); } catch(e) {} }
-        AppState.peers.delete(peerId);
-        removeRemoteVideo(peerId);
-        if (AppState.peers.size === 0) { $('#remoteCard')?.classList.add('hidden'); $('#screenShareCard')?.classList.add('hidden'); $('#emptyState')?.classList.remove('hidden'); AppState.isConnected = false; showNotification('Все участники отключились'); }
-        updateParticipantCount();
-    });
+        
+        // Создаём новый peer с обновлёнными потоками
+        const streams = [];
+        if (AppState.localStream) streams.push(AppState.localStream);
+        if (AppState.screenStream) streams.push(AppState.screenStream);
+        
+        const newPeer = new SimplePeer({
+            initiator: !AppState.isHost,
+            streams: streams,
+            trickle: true,
+            config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+        });
+        
+        setupPeerEvents(newPeer, peerId);
+        AppState.peers.set(peerId, newPeer);
+    }
 }
 
-function createPeer(peerId, initiator) {
-    console.log('🔧 Peer:', peerId, 'Инициатор:', initiator);
-    const streams = []; if (AppState.localStream) streams.push(AppState.localStream); if (AppState.screenStream) streams.push(AppState.screenStream);
-    
-    const peer = new SimplePeer({ initiator, streams, trickle: true, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
-    
+function setupPeerEvents(peer, peerId) {
     peer.on('signal', (data) => { if (AppState.sendSignal) AppState.sendSignal(data); });
     
     peer.on('stream', (stream) => {
-        console.log('📥 Поток от:', peerId, 'Дорожек:', stream.getTracks().length);
-        const vt = stream.getVideoTracks(); let isScreen = false;
+        console.log('📥 Поток, дорожек:', stream.getTracks().length);
+        const vt = stream.getVideoTracks();
+        let isScreen = false;
         
         for (const track of vt) {
             const label = (track.label || '').toLowerCase();
@@ -206,49 +242,68 @@ function createPeer(peerId, initiator) {
                 isScreen = true;
                 const ssv = $('#screenShareVideo'); if (ssv) ssv.srcObject = stream;
                 $('#screenShareCard')?.classList.remove('hidden');
-                showNotification('📺 Участник демонстрирует экран');
+                showNotification('📺 Собеседник демонстрирует экран');
                 break;
             }
         }
         
         if (!isScreen && vt.length > 0) {
-            addRemoteVideo(peerId, stream);
+            const rv = $('#remoteVideo'); if (rv) { rv.srcObject = stream; rv.parentElement?.classList.remove('hidden'); }
+            $('#remoteAvatarWrapper')?.classList.add('hidden');
         }
         
+        const at = stream.getAudioTracks();
+        if (at.length > 0) { if (AppState.remoteSpeechInterval) clearInterval(AppState.remoteSpeechInterval); AppState.remoteSpeechInterval = startSpeechDetection(stream, '#remoteCard'); }
+        
+        $('#remoteCard')?.classList.remove('hidden');
+        $('#emptyState')?.classList.add('hidden');
         AppState.isConnected = true;
-        showNotification('✅ Участник подключился');
+        showNotification('✅ Соединение установлено');
         updateParticipantCount();
     });
     
-    peer.on('connect', () => console.log('🔗 OK:', peerId));
-    peer.on('close', () => { AppState.peers.delete(peerId); removeRemoteVideo(peerId); updateParticipantCount(); });
-    peer.on('error', (e) => console.error('Peer error:', peerId, e));
+    peer.on('connect', () => console.log('🔗 Соединение установлено'));
+    peer.on('close', () => { AppState.peers.delete(peerId); if (AppState.peers.size === 0) { $('#remoteVideo').srcObject = null; $('#remoteCard')?.classList.add('hidden'); $('#screenShareCard')?.classList.add('hidden'); $('#emptyState')?.classList.remove('hidden'); AppState.isConnected = false; } updateParticipantCount(); });
+    peer.on('error', (err) => { console.error('Peer error:', err); });
+}
+
+// ===== Trystero =====
+function initTrystero() {
+    if (!window.trysteroJoinRoom) { updateStatus('Ошибка модуля связи'); return; }
+    console.log('🔗 Trystero. Комната:', AppState.roomId);
     
+    AppState.room = window.trysteroJoinRoom({ appId: 'conf-meet-v16-' + AppState.roomId }, 'meeting');
+    const [sendSignal, getSignal] = AppState.room.makeAction('signal');
+    const [sendChat, getChat] = AppState.room.makeAction('chat');
+    const [sendUserInfo, getUserInfo] = AppState.room.makeAction('userInfo');
+    AppState.sendSignal = sendSignal; AppState.sendChatMsg = sendChat; AppState.sendUserInfo = sendUserInfo;
+    
+    getSignal((data, peerId) => { let peer = AppState.peers.get(peerId); if (!peer) { peer = createPeer(peerId, !AppState.isHost); } try { peer.signal(data); } catch(e){} });
+    
+    getChat((data) => { if (data && data.text) displayChatMessage(data.sender || 'Собеседник', data.text, false); });
+    getUserInfo((info) => { updateRemoteUser(info); });
+    
+    AppState.room.onPeerJoin((peerId) => {
+        console.log('🟢 Пир:', peerId);
+        setTimeout(() => sendMyInfo(), 300);
+        if (!AppState.isHost) { createPeer(peerId, true); }
+    });
+    
+    AppState.room.onPeerLeave((peerId) => {
+        console.log('🔴 Пир ушёл:', peerId);
+        const peer = AppState.peers.get(peerId); if (peer) peer.destroy();
+        AppState.peers.delete(peerId);
+        if (AppState.peers.size === 0) { $('#remoteVideo').srcObject = null; $('#remoteCard')?.classList.add('hidden'); $('#screenShareCard')?.classList.add('hidden'); $('#emptyState')?.classList.remove('hidden'); AppState.isConnected = false; showNotification('Собеседник отключился'); }
+        updateParticipantCount();
+    });
+}
+
+function createPeer(peerId, initiator) {
+    const streams = []; if (AppState.localStream) streams.push(AppState.localStream); if (AppState.screenStream) streams.push(AppState.screenStream);
+    const peer = new SimplePeer({ initiator, streams, trickle: true, config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } });
+    setupPeerEvents(peer, peerId);
+    AppState.peers.set(peerId, peer);
     return peer;
-}
-
-// ===== Управление видео участников =====
-function addRemoteVideo(peerId, stream) {
-    const grid = $('#participantsGrid'); if (!grid) return;
-    
-    let card = document.getElementById('card-' + peerId);
-    if (!card) {
-        card = document.createElement('div'); card.id = 'card-' + peerId; card.className = 'participant-card remote';
-        card.innerHTML = `<div class="video-wrapper"><video id="video-${peerId}" autoplay playsinline></video></div><div class="avatar-wrapper hidden"><div class="avatar-circle"><span class="avatar-emoji">👤</span></div></div><div class="participant-overlay"><div class="participant-details"><span class="participant-name" id="name-${peerId}">Участник</span></div><div class="media-status"><i class="fas fa-microphone"></i></div></div>`;
-        const emptyState = $('#emptyState');
-        if (emptyState) { grid.insertBefore(card, emptyState); } else { grid.appendChild(card); }
-    }
-    
-    const video = document.getElementById('video-' + peerId);
-    if (video && stream) { video.srcObject = stream; card.querySelector('.video-wrapper').classList.remove('hidden'); }
-    const emptyState = $('#emptyState'); if (emptyState) emptyState.classList.add('hidden');
-    updateParticipantCount();
-}
-
-function removeRemoteVideo(peerId) {
-    const card = document.getElementById('card-' + peerId); if (card) card.remove();
-    if (AppState.peers.size === 0) { const emptyState = $('#emptyState'); if (emptyState) emptyState.classList.remove('hidden'); }
-    updateParticipantCount();
 }
 
 // ===== Управление =====
@@ -281,7 +336,7 @@ function updateStatus(text) { const ms = $('#meetingStatus'); if (ms) ms.textCon
 
 function startTimer() { AppState.startTime = Date.now(); if (AppState.timerInterval) clearInterval(AppState.timerInterval); AppState.timerInterval = setInterval(() => { const e = Math.floor((Date.now()-AppState.startTime)/1000); const m = Math.floor(e/60).toString().padStart(2,'0'); const s = (e%60).toString().padStart(2,'0'); const td = $('#timerDisplay'); if (td) td.textContent = `${m}:${s}`; }, 1000); }
 
-function hangUp() { AppState.peers.forEach(pData => { const p = pData.peer || pData; try { p.destroy(); } catch(e){} }); AppState.peers.clear(); if (AppState.room) { try { AppState.room.leave(); } catch(e){} AppState.room = null; } if (AppState.localStream) { AppState.localStream.getTracks().forEach(t => t.stop()); AppState.localStream = null; } if (AppState.screenStream) { AppState.screenStream.getTracks().forEach(t => t.stop()); AppState.screenStream = null; } if (AppState.speechInterval) clearInterval(AppState.speechInterval); if (AppState.remoteSpeechInterval) clearInterval(AppState.remoteSpeechInterval); stopScanner(); stopCameraPreview(); if (AppState.timerInterval) clearInterval(AppState.timerInterval); AppState.isHost = false; AppState.roomId = null; AppState.isConnected = false; AppState.sendSignal = null; AppState.sendChatMsg = null; AppState.sendUserInfo = null; $('#alertOverlay')?.classList.add('hidden'); const ml = $('#meetingLayout'); if (ml) ml.style.filter = 'none'; switchScreen('mainScreen'); window.location.hash = ''; }
+function hangUp() { AppState.peers.forEach(p => { try { p.destroy(); } catch(e){} }); AppState.peers.clear(); if (AppState.room) { try { AppState.room.leave(); } catch(e){} AppState.room = null; } if (AppState.localStream) { AppState.localStream.getTracks().forEach(t => t.stop()); AppState.localStream = null; } if (AppState.speechInterval) clearInterval(AppState.speechInterval); if (AppState.remoteSpeechInterval) clearInterval(AppState.remoteSpeechInterval); if (AppState.screenStream) { AppState.screenStream.getTracks().forEach(t => t.stop()); AppState.screenStream = null; } stopScanner(); stopCameraPreview(); if (AppState.timerInterval) clearInterval(AppState.timerInterval); AppState.isHost = false; AppState.roomId = null; AppState.isConnected = false; AppState.sendSignal = null; AppState.sendChatMsg = null; AppState.sendUserInfo = null; $('#alertOverlay')?.classList.add('hidden'); const ml = $('#meetingLayout'); if (ml) ml.style.filter = 'none'; switchScreen('mainScreen'); window.location.hash = ''; }
 
 function goToMain() { stopCameraPreview(); stopScanner(); switchScreen('mainScreen'); }
 function generateRoomId() { return 'meet-' + Math.random().toString(36).substring(2,10) + Date.now().toString(36); }
