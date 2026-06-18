@@ -66,7 +66,7 @@
     <!-- ЭКРАН СОЗДАНИЯ ВСТРЕЧИ -->
     <div class="screen setup-screen hidden" id="createScreen">
         <div class="setup-container">
-            <button class="back-btn" id="backFromScanner"><i class="fas fa-arrow-left"></i> Назад</button>
+            <button class="back-btn" onclick="goToMain()"><i class="fas fa-arrow-left"></i> Назад</button>
             <div class="setup-header">
                 <div class="avatar-picker">
                     <div class="avatar-circle-large camera-preview" id="createAvatarDisplay">
@@ -310,7 +310,7 @@
 
     <!-- ЭКРАН СКАНЕРА -->
     <div class="screen scanner-screen hidden" id="scannerScreen">
-        <button class="back-btn" onclick="goToMain()"><i class="fas fa-arrow-left"></i> Назад</button>
+        <button class="back-btn" id="backFromScanner"><i class="fas fa-arrow-left"></i> Назад</button>
         <div class="scanner-container">
             <h2><i class="fas fa-qrcode"></i> Сканирование QR-кода</h2>
             <div class="scanner-frame"><video id="scannerVideo" autoplay playsinline></video></div>
